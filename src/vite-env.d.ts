@@ -20,6 +20,10 @@ export interface AuthAPI {
   getUsers: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
   login: (userId: string, password: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   getDefaultCompany: () => Promise<{ success: boolean; data?: any; error?: string }>;
+  checkSetup: () => Promise<{ success: boolean; data?: { isSetupComplete: boolean }; error?: string }>;
+  completeSetup: (data: any) => Promise<{ success: boolean; data?: { recoveryKey: string }; error?: string }>;
+  verifyRecoveryKey: (key: string) => Promise<{ success: boolean; error?: string }>;
+  resetAdminPassword: (key: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface UsersAPI {
@@ -45,10 +49,13 @@ export interface DocumentsAPI {
 
 export interface PosAPI {
   searchProduct: (companyId: string, query: string) => Promise<{ success: boolean; data?: any; type?: 'list' | 'exact'; error?: string }>;
-  processSale: (data: any) => Promise<{ success: boolean; data?: { receiptId: string, ofdStatus?: string, ofdTicketUrl?: string, printData?: any }; error?: string }>;
+  processSale: (data: any) => Promise<{ success: boolean; data?: { receiptId: string, ofdStatus?: string, ofdTicketUrl?: string, ofdError?: string, printData?: any }; error?: string }>;
   getReceipts: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
   getReceiptDetails: (companyId: string, receiptId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   reprintReceipt: (companyId: string, receiptId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  deferReceipt: (companyId: string, name: string, cartData: any[]) => Promise<{ success: boolean; error?: string }>;
+  getDeferred: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+  deleteDeferred: (id: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface InventoryAPI {
@@ -57,6 +64,7 @@ export interface InventoryAPI {
   updateProduct: (data: any) => Promise<{ success: boolean; error?: string }>;
   deleteProduct: (companyId: string, productId: string) => Promise<{ success: boolean; error?: string }>;
   updateStock: (data: any) => Promise<{ success: boolean; error?: string }>;
+  getCategories: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
 }
 
 export interface SuppliersAPI {
@@ -76,7 +84,7 @@ export interface PurchasesAPI {
 
 export interface ReturnsAPI {
   searchReceipt: (companyId: string, receiptNumber: number) => Promise<{ success: boolean; data?: any; error?: string }>;
-  process: (data: any) => Promise<{ success: boolean; data?: { receiptId: string }; error?: string }>;
+  process: (data: any) => Promise<{ success: boolean; data?: { receiptId: string, ofdStatus?: string, ofdTicketUrl?: string, printData?: any }; error?: string }>;
 }
 
 export interface ShiftsAPI {
@@ -89,6 +97,9 @@ export interface ShiftsAPI {
 
 export interface AnalyticsAPI {
   getStats: (companyId: string, startDate?: string, endDate?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  grossProfit: (companyId: string, startDate?: string, endDate?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  taxRegister: (companyId: string, startDate?: string, endDate?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  valuationReport: (companyId: string, filter?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
 }
 
 export interface SettingsAPI {
@@ -115,10 +126,13 @@ export interface ScalesAPI {
   getSettings: (companyId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   saveSettings: (data: any) => Promise<{ success: boolean; error?: string }>;
   test: (companyId: string) => Promise<{ success: boolean; data?: { connected: boolean }; error?: string }>;
+  diagnose: (companyId: string) => Promise<{ success: boolean; data?: { lines: string[] }; error?: string }>;
+  getStatus: (companyId: string) => Promise<{ success: boolean; data?: { connected: boolean; weight: number; stable: boolean }; error?: string }>;
   startStream: (companyId: string) => Promise<{ success: boolean; error?: string }>;
   stopStream: () => Promise<{ success: boolean }>;
   onWeightUpdate: (callback: (reading: { weight: number; stable: boolean; error?: string }) => void) => void;
   offWeightUpdate: () => void;
+  onStatusUpdate: (callback: (data: { connected: boolean }) => void) => void;
 }
 
 export interface ReportsAPIExt {
@@ -150,6 +164,18 @@ export interface AppElectronAPI {
   documents: DocumentsAPI;
   terminals: TerminalsAPI;
   scales: ScalesAPI;
+  warehouses: {
+    getAll: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    create: (data: any) => Promise<{ success: boolean; data?: { id: string }; error?: string }>;
+  };
+  transfers: {
+    getAll: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    getOne: (companyId: string, id: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    create: (data: any) => Promise<{ success: boolean; data?: { id: string }; error?: string }>;
+    execute: (companyId: string, id: string) => Promise<{ success: boolean; error?: string }>;
+    cancel: (companyId: string, id: string) => Promise<{ success: boolean; error?: string }>;
+    getProductHistory: (companyId: string, productId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+  };
   reports: ReportsAPIExt & {
     xReport: ReportsAPIExt['xReport'];
     zReport: ReportsAPIExt['zReport'];
@@ -164,6 +190,10 @@ export interface AppElectronAPI {
     updateItem: (data: any) => Promise<{ success: boolean; error?: string }>;
     complete: (companyId: string, id: string) => Promise<{ success: boolean; error?: string }>;
   };
+  resortings: {
+    getAll: (companyId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+    create: (data: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+  };
   nkt: {
     search: (query: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
   };
@@ -176,8 +206,9 @@ export interface AppElectronAPI {
     list: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
     chooseDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string }>;
     getDir: () => Promise<{ success: boolean; data?: { dir: string }; error?: string }>;
-    getAuto: () => Promise<{ success: boolean; data?: { enabled: boolean }; error?: string }>;
-    setAuto: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+    getAuto: () => Promise<{ success: boolean; data?: { enabled: boolean, interval?: string }; error?: string }>;
+    setAuto: (enabled: boolean, interval?: string) => Promise<{ success: boolean; error?: string }>;
+    deleteOld: () => Promise<{ success: boolean; data?: { deleted: number }; error?: string }>;
   };
   network: {
     status: () => Promise<{ success: boolean; data?: { mode: string; serverUrl: string; localIP: string; isServerRunning: boolean; port: number }; error?: string }>;

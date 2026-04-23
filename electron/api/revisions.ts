@@ -67,17 +67,24 @@ export function setupRevisionsHandlers() {
           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
         `).run(revisionId, companyId, type, userId);
 
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+        if (!warehouseId) throw new Error('Основной склад не найден');
+
         let query = `
           SELECT p.id as product_id, p.price_purchase, IFNULL(i.quantity, 0) as quantity
           FROM products p
-          LEFT JOIN inventory i ON p.id = i.product_id AND i.company_id = p.company_id
+          LEFT JOIN inventory i ON p.id = i.product_id AND i.company_id = p.company_id AND i.warehouse_id = ?
           WHERE p.company_id = ? AND p.is_deleted = 0
         `;
-        const params: any[] = [companyId];
+        const params: any[] = [warehouseId, companyId];
 
         if (type === 'category' && categoryId) {
           query += ` AND p.category_id = ?`;
           params.push(categoryId);
+        } else if (type === 'supplier' && data.supplierId) {
+          query += ` AND p.supplier_id = ?`;
+          params.push(data.supplierId);
         }
 
         const products = db.prepare(query).all(...params) as any[];
@@ -167,17 +174,21 @@ export function setupRevisionsHandlers() {
         // Обновляем остатки на складе
         const items = db.prepare('SELECT * FROM revision_items WHERE revision_id = ? AND status = \'counted\'').all(id) as any[];
 
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+        if (!warehouseId) throw new Error('Основной склад не найден');
+
         for (const item of items) {
           if (item.difference === 0) continue; // Нет изменений
 
-          const currentInv = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND product_id = ?').get(companyId, item.product_id) as any;
+          const currentInv = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND warehouse_id = ? AND product_id = ?').get(companyId, warehouseId, item.product_id) as any;
           const qty = Math.max(0, item.actual_quantity);
           if (!currentInv) {
-            db.prepare('INSERT INTO inventory (id, company_id, product_id, quantity) VALUES (?, ?, ?, ?)')
-              .run(uuidv4(), companyId, item.product_id, qty);
+            db.prepare('INSERT INTO inventory (id, company_id, warehouse_id, product_id, quantity) VALUES (?, ?, ?, ?, ?)')
+              .run(uuidv4(), companyId, warehouseId, item.product_id, qty);
           } else {
-            db.prepare('UPDATE inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND product_id = ?')
-              .run(qty, companyId, item.product_id);
+            db.prepare('UPDATE inventory SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND warehouse_id = ? AND product_id = ?')
+              .run(qty, companyId, warehouseId, item.product_id);
           }
         }
       });
@@ -238,13 +249,21 @@ export function setupRevisionsHandlers() {
         }
       });
 
-      await printWindow.webContents.loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
-      );
+      // Используем файл для больших документов, чтобы избежать проблем с длиной data-url
+      const path = require('path');
+      const fs = require('fs');
+      const os = require('os');
+      const tempPath = path.join(os.tmpdir(), `revision_act_${Date.now()}.html`);
+      fs.writeFileSync(tempPath, html);
+
+      await printWindow.loadFile(tempPath);
+
+      // Ждём полной отрисовки (особенно если есть таблицы или шрифты)
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       printWindow.webContents.print(
         {
-          silent: false,
+          silent: false, // Оставляем false, чтобы пользователь мог выбрать принтер
           printBackground: true,
           deviceName: '',
         },
@@ -252,6 +271,8 @@ export function setupRevisionsHandlers() {
           if (!success) {
             log.error('Ошибка печати:', errorType);
           }
+          // Удаляем временный файл
+          try { fs.unlinkSync(tempPath); } catch (e) { }
           printWindow.destroy();
         }
       );
@@ -269,26 +290,32 @@ function generateRevisionActHTML(revision: any): string {
 <html>
 <head>
   <meta charset="UTF-8">
+  <title>Акт ревизии</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; font-size: 12px; padding: 15mm; color: #000; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; padding: 10mm; color: #000; background: #fff; }
     .header { text-align: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #000; }
     .header h1 { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-    .info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; padding: 10px; border: 1px solid #ccc; }
-    .info-row label { font-weight: bold; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 11px; }
-    th { background: #f0f0f0; border: 1px solid #000; padding: 5px 6px; text-align: left; }
-    td { border: 1px solid #ccc; padding: 4px 6px; }
-    .neg { color: #dc2626; }
-    .pos { color: #16a34a; }
-    .totals { border: 2px solid #000; padding: 10px; margin-bottom: 25px; }
-    .total-row { display: flex; justify-content: space-between; padding: 3px 0; }
-    .total-row.bold { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 6px; margin-top: 4px; }
+    .info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; padding: 10px; border: 1px solid #eee; background: #f9f9f9; }
+    .info-row { margin-bottom: 4px; }
+    .info-row label { font-weight: bold; color: #666; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 10px; }
+    th { background: #f0f0f0; border: 1px solid #000; padding: 6px 4px; text-align: left; }
+    td { border: 1px solid #ccc; padding: 4px; vertical-align: top; }
+    .neg { color: #dc2626; font-weight: bold; }
+    .pos { color: #16a34a; font-weight: bold; }
+    .totals { border: 2px solid #000; padding: 10px; margin-bottom: 25px; background: #fff; }
+    .total-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #eee; }
+    .total-row:last-child { border-bottom: none; }
+    .total-row.bold { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 8px; margin-top: 4px; }
     .signs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 40px; }
     .sign-block { text-align: center; }
-    .sign-line { border-bottom: 1px solid #000; height: 35px; margin-bottom: 4px; }
-    .sign-label { font-size: 10px; color: #333; }
-    @media print { @page { size: A4; margin: 10mm; } }
+    .sign-line { border-bottom: 1px solid #000; height: 30px; margin-bottom: 4px; }
+    .sign-label { font-size: 9px; color: #666; }
+    @media print { 
+      body { padding: 0; }
+      @page { margin: 10mm; } 
+    }
   </style>
 </head>
 <body>

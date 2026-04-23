@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getUsers: (companyId: string) => ipcRenderer.invoke('auth:get-users', companyId),
     login: (userId: string, password: string) => ipcRenderer.invoke('auth:login', userId, password),
     getDefaultCompany: () => ipcRenderer.invoke('auth:get-default-company'),
+    checkSetup: () => ipcRenderer.invoke('auth:check-setup'),
+    completeSetup: (data: any) => ipcRenderer.invoke('auth:complete-setup', data),
+    verifyRecoveryKey: (key: string) => ipcRenderer.invoke('auth:verify-recovery-key', key),
+    resetAdminPassword: (key: string, newPassword: string) => ipcRenderer.invoke('auth:reset-admin-password', key, newPassword),
   },
 
   users: {
@@ -50,6 +54,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getReceipts: (companyId: string) => ipcRenderer.invoke('pos:get-receipts', companyId),
     getReceiptDetails: (companyId: string, receiptId: string) => ipcRenderer.invoke('pos:get-receipt-details', companyId, receiptId),
     reprintReceipt: (companyId: string, receiptId: string) => ipcRenderer.invoke('pos:reprint-receipt', companyId, receiptId),
+    deferReceipt: (companyId: string, name: string, cartData: any[]) => ipcRenderer.invoke('pos:defer-receipt', companyId, name, cartData),
+    getDeferred: (companyId: string) => ipcRenderer.invoke('pos:get-deferred', companyId),
+    deleteDeferred: (id: string) => ipcRenderer.invoke('pos:delete-deferred', id),
   },
 
   inventory: {
@@ -58,6 +65,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateProduct: (data: any) => ipcRenderer.invoke('inventory:update-product', data),
     deleteProduct: (companyId: string, productId: string) => ipcRenderer.invoke('inventory:delete-product', companyId, productId),
     updateStock: (data: any) => ipcRenderer.invoke('inventory:update-stock', data),
+    getCategories: (companyId: string) => ipcRenderer.invoke('inventory:get-categories', companyId),
   },
 
   suppliers: {
@@ -90,6 +98,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   analytics: {
     getStats: (companyId: string, startDate?: string, endDate?: string) => ipcRenderer.invoke('analytics:get-stats', companyId, startDate, endDate),
+    grossProfit: (companyId: string, startDate?: string, endDate?: string) => ipcRenderer.invoke('analytics:gross-profit', companyId, startDate, endDate),
+    taxRegister: (companyId: string, startDate?: string, endDate?: string) => ipcRenderer.invoke('analytics:tax-register', companyId, startDate, endDate),
+    valuationReport: (companyId: string, filter?: any) => ipcRenderer.invoke('analytics:valuation-report', companyId, filter),
   },
 
   settings: {
@@ -112,7 +123,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     chooseDir: () => ipcRenderer.invoke('backup:choose-dir'),
     getDir: () => ipcRenderer.invoke('backup:get-dir'),
     getAuto: () => ipcRenderer.invoke('backup:get-auto'),
-    setAuto: (enabled: boolean) => ipcRenderer.invoke('backup:set-auto', enabled),
+    setAuto: (enabled: boolean, interval?: string) => ipcRenderer.invoke('backup:set-auto', enabled, interval),
+    deleteOld: () => ipcRenderer.invoke('backup:delete-old'),
   },
 
   network: {
@@ -143,10 +155,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: (companyId: string) => ipcRenderer.invoke('scales:get-settings', companyId),
     saveSettings: (data: any) => ipcRenderer.invoke('scales:save-settings', data),
     test: (companyId: string) => ipcRenderer.invoke('scales:test', companyId),
+    diagnose: (companyId: string) => ipcRenderer.invoke('scales:diagnose', companyId),
+    getStatus: (companyId: string) => ipcRenderer.invoke('scales:get-status', companyId),
     startStream: (companyId: string) => ipcRenderer.invoke('scales:start-stream', companyId),
     stopStream: () => ipcRenderer.invoke('scales:stop-stream'),
     onWeightUpdate: (callback: WeightCallback) => { weightCallback = callback; },
     offWeightUpdate: () => { weightCallback = null; },
+    onStatusUpdate: (callback: (data: { connected: boolean }) => void) => {
+      ipcRenderer.on('scales:status-update', (_event, data) => callback(data));
+    },
   },
 
   revisions: {
@@ -155,6 +172,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (data: any) => ipcRenderer.invoke('revisions:create', data),
     updateItem: (data: any) => ipcRenderer.invoke('revisions:update-item', data),
     complete: (companyId: string, id: string) => ipcRenderer.invoke('revisions:complete', companyId, id),
+  },
+
+  resortings: {
+    getAll: (companyId: string) => ipcRenderer.invoke('resortings:get-all', companyId),
+    create: (data: any) => ipcRenderer.invoke('resortings:create', data),
+  },
+
+  warehouses: {
+    getAll: (companyId: string) => ipcRenderer.invoke('warehouses:get-all', companyId),
+    create: (data: any) => ipcRenderer.invoke('warehouses:create', data),
+  },
+
+  transfers: {
+    getAll: (companyId: string) => ipcRenderer.invoke('transfers:get-all', companyId),
+    getOne: (companyId: string, id: string) => ipcRenderer.invoke('transfers:get-one', companyId, id),
+    create: (data: any) => ipcRenderer.invoke('transfers:create', data),
+    execute: (companyId: string, id: string) => ipcRenderer.invoke('transfers:execute', companyId, id),
+    cancel: (companyId: string, id: string) => ipcRenderer.invoke('transfers:cancel', companyId, id),
+    getProductHistory: (companyId: string, productId: string) => ipcRenderer.invoke('transfers:get-product-history', companyId, productId),
   },
 
   nkt: {

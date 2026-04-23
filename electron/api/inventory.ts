@@ -11,19 +11,22 @@ export function setupInventoryHandlers() {
     try {
       if (!db) throw new Error('Database not initialized');
 
+      const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+      const warehouseId = mainWarehouse?.id;
+
       let query = `
         SELECT 
           p.id, p.barcode, p.name, p.name_kk, p.price_purchase, p.price_retail, 
-          p.measure_unit, p.is_weighable, p.is_marked, p.is_alcohol, p.alcohol_abv, p.alcohol_volume,
+          p.measure_unit, p.is_weighable, p.is_marked, p.is_alcohol, p.alcohol_abv, p.alcohol_volume, p.vat_rate,
           c.name as category_name,
           COALESCE(i.quantity, 0) as stock_quantity
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        LEFT JOIN inventory i ON p.id = i.product_id AND i.company_id = p.company_id
+        LEFT JOIN inventory i ON p.id = i.product_id AND i.company_id = p.company_id AND i.warehouse_id = ?
         WHERE p.company_id = ? AND p.is_deleted = 0
       `;
 
-      const params: any[] = [companyId];
+      const params: any[] = [warehouseId, companyId];
 
       if (search && search.trim() !== '') {
         query += ` AND (p.name LIKE ? OR p.barcode LIKE ?)`;
@@ -41,11 +44,23 @@ export function setupInventoryHandlers() {
     }
   });
 
+  // Получить список категорий
+  registerRpc('inventory:get-categories', async (_event, companyId: string) => {
+    try {
+      if (!db) throw new Error('Database not initialized');
+      const categories = db.prepare('SELECT id, name FROM categories WHERE company_id = ? ORDER BY name ASC').all(companyId);
+      return { success: true, data: categories };
+    } catch (error) {
+      log.error('Failed to get categories:', error);
+      return { success: false, error: 'Ошибка получения списка категорий' };
+    }
+  });
+
   // Создать товар
   registerRpc('inventory:create-product', async (_event, data: any) => {
     try {
       if (!db) throw new Error('Database not initialized');
-      const { companyId, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume, initial_stock } = data;
+      const { companyId, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume, initial_stock, vat_rate, category_id, supplier_id } = data;
 
       const productId = uuidv4();
 
@@ -57,16 +72,19 @@ export function setupInventoryHandlers() {
         }
 
         db.prepare(`
-          INSERT INTO products(id, company_id, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume, is_deleted)
-          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        `).run(productId, companyId, barcode, name, name_kk || null, price_purchase, price_retail, measure_unit, is_weighable ? 1 : 0, is_marked ? 1 : 0, is_alcohol ? 1 : 0, alcohol_abv || null, alcohol_volume || null);
+          INSERT INTO products(id, company_id, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume, vat_rate, category_id, supplier_id, is_deleted)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `).run(productId, companyId, barcode, name, name_kk || null, price_purchase, price_retail, measure_unit, is_weighable ? 1 : 0, is_marked ? 1 : 0, is_alcohol ? 1 : 0, alcohol_abv || null, alcohol_volume || null, vat_rate || 0, category_id || null, supplier_id || null);
 
-        if (initial_stock && parseFloat(initial_stock) > 0) {
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+
+        if (initial_stock && parseFloat(initial_stock) > 0 && warehouseId) {
           const invId = uuidv4();
           db.prepare(`
-            INSERT INTO inventory(id, company_id, product_id, quantity)
-            VALUES(?, ?, ?, ?)
-          `).run(invId, companyId, productId, parseFloat(initial_stock));
+            INSERT INTO inventory(id, company_id, warehouse_id, product_id, quantity)
+            VALUES(?, ?, ?, ?, ?)
+          `).run(invId, companyId, warehouseId, productId, parseFloat(initial_stock));
         }
       });
 
@@ -114,7 +132,7 @@ export function setupInventoryHandlers() {
   registerRpc('inventory:update-product', async (_event, data: any) => {
     try {
       if (!db) throw new Error('Database not initialized');
-      const { companyId, productId, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume } = data;
+      const { companyId, productId, barcode, name, name_kk, price_purchase, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, alcohol_abv, alcohol_volume, vat_rate, category_id, supplier_id } = data;
 
       // Проверка уникальности штрихкода (кроме текущего товара)
       const existing = db.prepare('SELECT id FROM products WHERE company_id = ? AND barcode = ? AND id != ?').get(companyId, barcode, productId) as any;
@@ -125,9 +143,10 @@ export function setupInventoryHandlers() {
       db.prepare(`
         UPDATE products
         SET barcode = ?, name = ?, name_kk = ?, price_purchase = ?, price_retail = ?,
-            measure_unit = ?, is_weighable = ?, is_marked = ?, is_alcohol = ?, alcohol_abv = ?, alcohol_volume = ?
+            measure_unit = ?, is_weighable = ?, is_marked = ?, is_alcohol = ?, alcohol_abv = ?, alcohol_volume = ?, vat_rate = ?,
+            category_id = ?, supplier_id = ?
         WHERE id = ? AND company_id = ?
-      `).run(barcode, name, name_kk || null, price_purchase, price_retail, measure_unit, is_weighable ? 1 : 0, is_marked ? 1 : 0, is_alcohol ? 1 : 0, alcohol_abv || null, alcohol_volume || null, productId, companyId);
+      `).run(barcode, name, name_kk || null, price_purchase, price_retail, measure_unit, is_weighable ? 1 : 0, is_marked ? 1 : 0, is_alcohol ? 1 : 0, alcohol_abv || null, alcohol_volume || null, vat_rate || 0, category_id || null, supplier_id || null, productId, companyId);
 
       return { success: true };
     } catch (error: any) {
@@ -145,8 +164,12 @@ export function setupInventoryHandlers() {
       // type: 'add' (Оприходование), 'remove' (Списание), 'set' (Инвентаризация/Установка точного значения)
 
       const transaction = db.transaction(() => {
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+        if (!warehouseId) throw new Error('Основной склад не найден');
+
         // Проверяем существует ли запись в инвентаре
-        const current = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND product_id = ?').get(companyId, productId) as { quantity: number } | undefined;
+        const current = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND warehouse_id = ? AND product_id = ?').get(companyId, warehouseId, productId) as { quantity: number } | undefined;
 
         let newQuantity = 0;
 
@@ -156,9 +179,9 @@ export function setupInventoryHandlers() {
           if (type === 'remove') newQuantity = -parseFloat(quantity);
 
           db.prepare(`
-            INSERT INTO inventory (id, company_id, product_id, quantity)
-            VALUES (?, ?, ?, ?)
-          `).run(uuidv4(), companyId, productId, newQuantity);
+            INSERT INTO inventory (id, company_id, warehouse_id, product_id, quantity)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(uuidv4(), companyId, warehouseId, productId, newQuantity);
         } else {
           if (type === 'set') newQuantity = parseFloat(quantity);
           if (type === 'add') newQuantity = current.quantity + parseFloat(quantity);
@@ -169,8 +192,8 @@ export function setupInventoryHandlers() {
           db.prepare(`
             UPDATE inventory 
             SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE company_id = ? AND product_id = ?
-          `).run(newQuantity, companyId, productId);
+            WHERE company_id = ? AND warehouse_id = ? AND product_id = ?
+          `).run(newQuantity, companyId, warehouseId, productId);
         }
 
         // TODO: В идеале тут еще нужно писать лог движения товаров (таблица stock_movements)
@@ -184,4 +207,5 @@ export function setupInventoryHandlers() {
       return { success: false, error: error.message || 'Ошибка обновления остатков' };
     }
   });
+
 }

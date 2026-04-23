@@ -98,13 +98,23 @@ export function setupReportsHandlers() {
         bankTotals[b.bank] = b.total;
       }
 
-      const settings = db.prepare(`SELECT ofd_cashbox_id as znm FROM settings WHERE company_id = ?`).get(companyId) as any;
+      const settings = db.prepare(`SELECT * FROM settings WHERE company_id = ?`).get(companyId) as any;
+      let ofdTicketUrl = '';
+
+      // Если включена WebKassa — запрашиваем фискальный X-отчет
+      if (settings?.ofd_provider && settings.ofd_provider !== 'none' && settings.ofd_provider !== 'mock') {
+        const webkassa = new WebkassaService(companyId);
+        const ofdRes = await webkassa.getXReport();
+        if (ofdRes.success) {
+          ofdTicketUrl = ofdRes.ticketUrl || '';
+        }
+      }
 
       const now = new Date();
       const reportData: XReportData = {
         companyName: '',
         cashierName: shift.cashier_name || 'Кассир',
-        znm: settings?.znm || '—',
+        znm: settings?.ofd_cashbox_id || '—',
         date: now.toLocaleDateString('ru-RU'),
         time: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
         salesCount,
@@ -123,6 +133,7 @@ export function setupReportsHandlers() {
         withdrawals,
         cashBalance: shift.end_cash || 0,
         cardByBank: bankTotals,
+        ofdTicketUrl // Передаем URL для QR-кода
       };
 
       return { success: true, data: reportData };
@@ -153,6 +164,7 @@ export function setupReportsHandlers() {
       // Отправляем Z-отчёт в WebKassa
       const webkassa = new WebkassaService(companyId);
       let fiscalNumber = '';
+      let ofdTicketUrl = '';
 
       if (settings.ofd_provider === 'mock') {
         fiscalNumber = `MOCK-Z-${Date.now()}`;
@@ -162,10 +174,11 @@ export function setupReportsHandlers() {
           return { success: false, error: authOk.error || 'Не удалось авторизоваться в WebKassa' };
         }
         const closeResult = await webkassa.closeShift();
-        if (!closeResult) {
-          return { success: false, error: 'Ошибка отправки Z-отчёта в WebKassa' };
+        if (!closeResult.success) {
+          return { success: false, error: closeResult.error || 'Ошибка отправки Z-отчёта в WebKassa' };
         }
-        fiscalNumber = `Z-${Date.now()}`;
+        fiscalNumber = closeResult.reportNumber || `Z-${Date.now()}`;
+        ofdTicketUrl = closeResult.ticketUrl || '';
       }
 
       // Закрываем смену в БД
@@ -179,6 +192,7 @@ export function setupReportsHandlers() {
         data: {
           fiscalNumber,
           closedAt: now,
+          ofdTicketUrl
         }
       };
     } catch (error) {

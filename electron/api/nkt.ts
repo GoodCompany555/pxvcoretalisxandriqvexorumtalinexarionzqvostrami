@@ -97,7 +97,7 @@ export function setupNktHandlers() {
           : p.category || '',
       }));
 
-      
+
       return { success: true, data: normalized };
     } catch (error: any) {
       log.error('НКТ недоступен:', error.message);

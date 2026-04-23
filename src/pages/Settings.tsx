@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Save, Store, Link as LinkIcon, Wifi, WifiOff, Plus, Trash2, Scale, CreditCard, Globe, CheckCircle, XCircle, Eye, EyeOff, Loader2, Database, FolderOpen, RefreshCcw, Download, Upload } from 'lucide-react';
+import { Save, Store, Link as LinkIcon, Wifi, WifiOff, Plus, Trash2, Scale, CreditCard, Globe, CheckCircle, XCircle, Eye, EyeOff, Loader2, Database, FolderOpen, RefreshCcw, Download, Upload, LayoutDashboard } from 'lucide-react';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { KeyboardIcon } from '../components/KeyboardIcon';
 import toast from 'react-hot-toast';
@@ -8,6 +8,8 @@ import { useAuthStore } from '../store/auth';
 import { useTranslation } from 'react-i18next';
 import { useCompanyStore } from '../store/companyStore';
 import { Input } from '../components/ui/input';
+import { CustomSelect } from '../components/ui/CustomSelect';
+import { DatePicker } from '../components/DatePicker';
 
 
 const BANKS = ['Halyk Bank', 'Kaspi Bank', 'Forte Bank', 'Jusan Bank', 'BCC', 'Freedom Bank'];
@@ -16,6 +18,9 @@ const SCALE_PROTOCOLS = [
   { value: 'cas', label: 'CAS' },
   { value: 'toledo', label: 'Toledo' },
   { value: 'massak', label: 'Massa-K' },
+  { value: 'ocom', label: 'OCOM (TM-F66)' },
+  { value: 'raw', label: 'Raw TCP' },
+  { value: 'auto', label: 'Автоопределение' },
 ];
 
 export default function Settings() {
@@ -25,16 +30,24 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState<'company' | 'equipment' | 'fiscal' | 'language' | 'backup' | 'network'>('company');
   const { setCompanyName } = useCompanyStore();
 
-  // Company form
   const [formData, setFormData] = useState({
     companyName: settings.companyName,
     bin: settings.bin,
     address: settings.address,
     ofdProvider: settings.ofdProvider,
-    ofdApiKey: settings.ofdApiKey,
     ofdLogin: settings.ofdLogin,
     ofdPassword: settings.ofdPassword,
     ofdCashboxId: settings.ofdCashboxId,
+    // VAT & Taxes
+    isVatPayer: settings.isVatPayer,
+    vatCertificateSeries: settings.vatCertificateSeries,
+    vatCertificateNumber: settings.vatCertificateNumber,
+    vatRegisteredAt: settings.vatRegisteredAt || '',
+    vatCertificateIssuedAt: settings.vatCertificateIssuedAt || '',
+    taxRegime: settings.taxRegime,
+    isKpnPayer: settings.isKpnPayer,
+    isExcisePayer: settings.isExcisePayer,
+    accountingPolicyStartDate: settings.accountingPolicyStartDate || '',
   });
   const [showOfdPassword, setShowOfdPassword] = useState(false);
   const [webkassaStatus, setWebkassaStatus] = useState<'idle' | 'checking' | 'ok' | 'fail'>('idle');
@@ -44,6 +57,7 @@ export default function Settings() {
   const [backupList, setBackupList] = useState<any[]>([]);
   const [backupDir, setBackupDir] = useState('');
   const [autoBackup, setAutoBackup] = useState(false);
+  const [autoBackupInterval, setAutoBackupInterval] = useState('daily');
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreConfirm, setRestoreConfirm] = useState(false);
 
@@ -71,12 +85,18 @@ export default function Settings() {
 
   // Scales
   const [scaleSettings, setScaleSettings] = useState({
+    connectionType: 'com' as 'com' | 'lan',
     comPort: 'COM3',
     baudRate: 9600,
+    lanIp: '192.168.1.100',
+    lanPort: 4196,
     protocol: 'cas',
     isActive: false,
   });
   const [scaleStatus, setScaleStatus] = useState<'idle' | 'checking' | 'ok' | 'fail'>('idle');
+  const [diagModalOpen, setDiagModalOpen] = useState(false);
+  const [diagLines, setDiagLines] = useState<string[]>([]);
+  const [diagLoading, setDiagLoading] = useState(false);
 
   // Language
   const [currentLang, setCurrentLang] = useState(i18n.language);
@@ -159,8 +179,11 @@ export default function Settings() {
       const res = await window.electronAPI.scales.getSettings(company.id);
       if (res.success && res.data) {
         setScaleSettings({
+          connectionType: res.data.connection_type || 'com',
           comPort: res.data.com_port || 'COM3',
           baudRate: res.data.baud_rate || 9600,
+          lanIp: res.data.lan_ip || '192.168.1.100',
+          lanPort: res.data.lan_port || 4196,
           protocol: res.data.protocol || 'cas',
           isActive: !!res.data.is_active,
         });
@@ -173,8 +196,11 @@ export default function Settings() {
     try {
       await window.electronAPI.scales.saveSettings({
         companyId: company.id,
+        connectionType: scaleSettings.connectionType,
         comPort: scaleSettings.comPort,
         baudRate: scaleSettings.baudRate,
+        lanIp: scaleSettings.lanIp,
+        lanPort: scaleSettings.lanPort,
         protocol: scaleSettings.protocol,
         isActive: scaleSettings.isActive,
       });
@@ -189,6 +215,29 @@ export default function Settings() {
       const res = await window.electronAPI.scales.test(company.id);
       setScaleStatus(res.success && res.data?.connected ? 'ok' : 'fail');
     } catch { setScaleStatus('fail'); }
+  };
+
+  const handleDiagnoseScales = async () => {
+    if (!company?.id) return;
+    if (scaleSettings.connectionType !== 'lan') {
+      toast.error('Диагностика работает только при LAN (TCP/IP) подключении');
+      return;
+    }
+    setDiagModalOpen(true);
+    setDiagLoading(true);
+    setDiagLines(['Подключение к весам (жди 10 секунд)...']);
+    try {
+      const res = await window.electronAPI.scales.diagnose(company.id);
+      if (res.success && res.data?.lines) {
+        setDiagLines(res.data.lines);
+      } else {
+        setDiagLines(['Ошибка диагностики: ' + (res.error || 'Неизвестно')]);
+      }
+    } catch (e: any) {
+      setDiagLines(['Ошибка: ' + e.message]);
+    } finally {
+      setDiagLoading(false);
+    }
   };
 
   // ====== WEBKASSA ======
@@ -225,7 +274,10 @@ export default function Settings() {
       ]);
       if (listRes.success) setBackupList(listRes.data || []);
       if (dirRes.success) setBackupDir(dirRes.data?.dir || '');
-      if (autoRes.success) setAutoBackup(autoRes.data?.enabled || false);
+      if (autoRes.success) {
+        setAutoBackup(autoRes.data?.enabled || false);
+        setAutoBackupInterval(autoRes.data?.interval || 'daily');
+      }
     } catch { }
   };
 
@@ -271,12 +323,27 @@ export default function Settings() {
     } catch { }
   };
 
-  const handleToggleAutoBackup = async (enabled: boolean) => {
+  const handleToggleAutoBackup = async (enabled: boolean, interval: string = autoBackupInterval) => {
     try {
-      await window.electronAPI.backup.setAuto(enabled);
+      await window.electronAPI.backup.setAuto(enabled, interval);
       setAutoBackup(enabled);
+      setAutoBackupInterval(interval);
       toast.success(enabled ? 'Автокопирование включено' : 'Автокопирование выключено');
     } catch { }
+  };
+
+  const handleDeleteOldBackups = async () => {
+    setBackupLoading(true);
+    try {
+      const res = await window.electronAPI.backup.deleteOld();
+      if (res.success) {
+        toast.success(`Удалено старых баз: ${res.data?.deleted || 0}`);
+        loadBackupData();
+      } else {
+        toast.error(res.error || 'Ошибка удаления');
+      }
+    } catch { toast.error('Ошибка'); }
+    finally { setBackupLoading(false); }
   };
 
   // ====== NETWORK ======
@@ -367,10 +434,19 @@ export default function Settings() {
         bin: formData.bin,
         address: formData.address,
         ofdProvider: formData.ofdProvider,
-        ofdApiKey: formData.ofdApiKey,
         ofdLogin: formData.ofdLogin,
         ofdPassword: formData.ofdPassword,
         ofdCashboxId: formData.ofdCashboxId,
+        // VAT & Taxes
+        isVatPayer: formData.isVatPayer,
+        vatCertificateSeries: formData.vatCertificateSeries,
+        vatCertificateNumber: formData.vatCertificateNumber,
+        vatRegisteredAt: formData.vatRegisteredAt || null,
+        vatCertificateIssuedAt: formData.vatCertificateIssuedAt || null,
+        taxRegime: formData.taxRegime,
+        isKpnPayer: formData.isKpnPayer,
+        isExcisePayer: formData.isExcisePayer,
+        accountingPolicyStartDate: formData.accountingPolicyStartDate || null,
       });
 
       if (!res.success) {
@@ -383,10 +459,18 @@ export default function Settings() {
         companyName: formData.companyName,
         bin: formData.bin,
         address: formData.address,
+        isVatPayer: formData.isVatPayer,
+        vatCertificateSeries: formData.vatCertificateSeries,
+        vatCertificateNumber: formData.vatCertificateNumber,
+        vatRegisteredAt: formData.vatRegisteredAt || null,
+        vatCertificateIssuedAt: formData.vatCertificateIssuedAt || null,
+        taxRegime: formData.taxRegime as any,
+        isKpnPayer: formData.isKpnPayer,
+        isExcisePayer: formData.isExcisePayer,
+        accountingPolicyStartDate: formData.accountingPolicyStartDate || null,
       });
       settings.setOfdCredentials({
         ofdProvider: formData.ofdProvider as any,
-        ofdApiKey: formData.ofdApiKey,
         ofdLogin: formData.ofdLogin,
         ofdPassword: formData.ofdPassword,
         ofdCashboxId: formData.ofdCashboxId,
@@ -401,10 +485,10 @@ export default function Settings() {
 
   const tabs = [
     { id: 'company' as const, label: t('settings.company'), icon: Store },
-    { id: 'equipment' as const, label: t('settings.equipment'), icon: CreditCard },
+    // { id: 'equipment' as const, label: t('settings.equipment'), icon: CreditCard },
     { id: 'fiscal' as const, label: t('settings.fiscalization'), icon: LinkIcon },
-    { id: 'backup' as const, label: 'Резервная копия', icon: Database },
-    { id: 'network' as const, label: 'Сеть', icon: Wifi },
+    { id: 'backup' as const, label: t('settings.backupTab'), icon: Database },
+    { id: 'network' as const, label: t('settings.networkTab'), icon: Wifi },
     { id: 'language' as const, label: t('settings.language'), icon: Globe },
   ];
 
@@ -442,15 +526,18 @@ export default function Settings() {
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.shopName')}</label>
               <div className="relative">
                 <Input type="text" name="companyName" value={formData.companyName} onChange={handleChange}
-                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="ИП Иванов" />
+                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="ИП Иванов" maxLength={75} />
                 <KeyboardIcon />
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.bin')}</label>
               <div className="relative">
-                <Input type="text" name="bin" value={formData.bin} onChange={handleChange}
-                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="000000000000" />
+                <Input type="text" name="bin" value={formData.bin} onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '').substring(0, 12);
+                  setFormData(p => ({ ...p, bin: val }));
+                }}
+                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="000000000000" maxLength={12} />
                 <KeyboardIcon />
               </div>
             </div>
@@ -458,9 +545,78 @@ export default function Settings() {
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.legalAddress')}</label>
               <div className="relative">
                 <Input type="text" name="address" value={formData.address} onChange={handleChange}
-                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="г. Алматы, ул. Абая..." />
+                  className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="г. Алматы, ул. Абая..." maxLength={75} />
                 <KeyboardIcon />
               </div>
+            </div>
+
+            <div className="pt-6 border-t border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800 mb-1">{t('settings.taxSettings')}</h3>
+              <p className="text-sm text-gray-500 mb-4">{t('settings.taxSettingsDesc')}</p>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="flex flex-col">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.accountingStart')}</label>
+                  <div className="max-w-[200px]">
+                    <DatePicker value={formData.accountingPolicyStartDate} onChange={val => setFormData(p => ({ ...p, accountingPolicyStartDate: val }))} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.taxRegime')}</label>
+                  <CustomSelect
+                    value={formData.taxRegime}
+                    onChange={val => setFormData(p => ({ ...p, taxRegime: val as any }))}
+                    options={[
+                      { value: 'СНР', label: t('settings.regimeSNR') },
+                      { value: 'ОУР', label: t('settings.regimeOYR') },
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" name="isKpnPayer" checked={formData.isKpnPayer} onChange={e => setFormData(p => ({ ...p, isKpnPayer: e.target.checked }))}
+                    className="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary" />
+                  <span className="text-sm font-medium text-gray-700">Плательщик КПН</span>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" name="isVatPayer" checked={formData.isVatPayer} onChange={e => setFormData(p => ({ ...p, isVatPayer: e.target.checked }))}
+                    className="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary" />
+                  <span className="text-sm font-medium text-gray-700">{t('settings.isVatPayer')}</span>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" name="isExcisePayer" checked={formData.isExcisePayer} onChange={e => setFormData(p => ({ ...p, isExcisePayer: e.target.checked }))}
+                    className="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary" />
+                  <span className="text-sm font-medium text-gray-700">Плательщик акциза</span>
+                </label>
+              </div>
+
+              {formData.isVatPayer && (
+                <div className="mt-6 p-4 bg-blue-50/50 rounded-xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
+                  <h4 className="text-sm font-bold text-blue-900 mb-4 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    Свидетельство о постановке на учёт по НДС
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.vatRegDate')}</label>
+                      <DatePicker value={formData.vatRegisteredAt} onChange={val => setFormData(p => ({ ...p, vatRegisteredAt: val }))} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.vatRegNumber')}</label>
+                      <Input type="text" name="vatCertificateNumber" value={formData.vatCertificateNumber} onChange={handleChange}
+                        className="w-full px-3 py-1.5 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="000000" />
+                    </div>
+                    <div className="flex flex-col">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Дата выдачи свидетельства</label>
+                      <DatePicker value={formData.vatCertificateIssuedAt} onChange={val => setFormData(p => ({ ...p, vatCertificateIssuedAt: val }))} />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -470,7 +626,7 @@ export default function Settings() {
       {activeTab === 'equipment' && (
         <div className="space-y-6">
           {/* POS Terminals */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-visible">
             <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
               <div className="flex items-center">
                 <CreditCard className="w-5 h-5 text-blue-500 mr-2" />
@@ -487,10 +643,11 @@ export default function Settings() {
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.bankName')}</label>
-                    <select value={newTerminal.bankName} onChange={e => setNewTerminal(p => ({ ...p, bankName: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-primary">
-                      {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                    </select>
+                    <CustomSelect
+                      value={newTerminal.bankName}
+                      onChange={val => setNewTerminal(p => ({ ...p, bankName: val }))}
+                      options={BANKS.map(b => ({ value: b, label: b }))}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.terminalModel')}</label>
@@ -499,11 +656,14 @@ export default function Settings() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.connectionType')}</label>
-                    <select value={newTerminal.connectionType} onChange={e => setNewTerminal(p => ({ ...p, connectionType: e.target.value as any }))}
-                      className="w-full px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-primary">
-                      <option value="tcp">TCP/IP</option>
-                      <option value="com">COM-порт</option>
-                    </select>
+                    <CustomSelect
+                      value={newTerminal.connectionType}
+                      onChange={val => setNewTerminal(p => ({ ...p, connectionType: val as any }))}
+                      options={[
+                        { value: 'tcp', label: 'TCP/IP' },
+                        { value: 'com', label: 'COM-порт' },
+                      ]}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -575,25 +735,61 @@ export default function Settings() {
                   <div className="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
                 </label>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.scalePort')}</label>
-                <Input type="text" value={scaleSettings.comPort} onChange={e => setScaleSettings(p => ({ ...p, comPort: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="COM3" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Тип подключения</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="scaleConnectionType" value="com" checked={scaleSettings.connectionType === 'com'} onChange={() => setScaleSettings(p => ({ ...p, connectionType: 'com' }))} className="w-4 h-4 text-primary" />
+                    <span>COM-порт</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="scaleConnectionType" value="lan" checked={scaleSettings.connectionType === 'lan'} onChange={() => setScaleSettings(p => ({ ...p, connectionType: 'lan' }))} className="w-4 h-4 text-primary" />
+                    <span>LAN (TCP/IP)</span>
+                  </label>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.scaleBaud')}</label>
-                <select value={scaleSettings.baudRate} onChange={e => setScaleSettings(p => ({ ...p, baudRate: parseInt(e.target.value) }))}
-                  className="w-full px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-primary">
-                  {BAUD_RATES.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
+
+              {scaleSettings.connectionType === 'com' ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.scalePort')}</label>
+                    <Input type="text" value={scaleSettings.comPort} onChange={e => setScaleSettings(p => ({ ...p, comPort: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="COM3" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.scaleBaud')}</label>
+                    <CustomSelect
+                      value={scaleSettings.baudRate.toString()}
+                      onChange={val => setScaleSettings(p => ({ ...p, baudRate: parseInt(val) }))}
+                      options={BAUD_RATES.map(b => ({ value: b.toString(), label: b.toString() }))}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">IP адрес</label>
+                    <Input type="text" value={scaleSettings.lanIp} onChange={e => setScaleSettings(p => ({ ...p, lanIp: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="192.168.1.100" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Порт</label>
+                    <Input type="number" value={scaleSettings.lanPort?.toString() || ''} onChange={e => setScaleSettings(p => ({ ...p, lanPort: parseInt(e.target.value) || 0 }))}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="4196" />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.scaleProtocol')}</label>
-                <select value={scaleSettings.protocol} onChange={e => setScaleSettings(p => ({ ...p, protocol: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-primary">
-                  {SCALE_PROTOCOLS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
+                <CustomSelect
+                  value={scaleSettings.protocol}
+                  onChange={val => setScaleSettings(p => ({ ...p, protocol: val }))}
+                  options={SCALE_PROTOCOLS}
+                />
               </div>
+
               <div className="flex gap-3 pt-2">
                 <button onClick={handleSaveScales} className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors">
                   {t('common.save')}
@@ -603,9 +799,43 @@ export default function Settings() {
                   {scaleStatus === 'checking' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}
                   {t('settings.testScales')}
                 </button>
+                {scaleSettings.connectionType === 'lan' && (
+                  <button onClick={handleDiagnoseScales} disabled={diagLoading}
+                    className="px-6 py-2 border border-orange-500 text-orange-600 hover:bg-orange-50 rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50">
+                    <RefreshCcw className={`w-4 h-4 ${diagLoading ? 'animate-spin' : ''}`} />
+                    Диагностика
+                  </button>
+                )}
               </div>
               {scaleStatus === 'ok' && <div className="text-green-600 text-sm font-medium flex items-center gap-1"><CheckCircle className="w-4 h-4" /> {t('settings.scalesConnected')}</div>}
               {scaleStatus === 'fail' && <div className="text-red-600 text-sm font-medium flex items-center gap-1"><XCircle className="w-4 h-4" /> {t('settings.scalesOff')}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DIAGNOSTICS MODAL */}
+      {diagModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                <Scale className="w-5 h-5 text-orange-500" />
+                Диагностика весов
+              </h3>
+              <button onClick={() => setDiagModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-4 bg-gray-900 text-green-400 font-mono text-sm h-64 overflow-y-auto">
+              {diagLines.map((line, i) => (
+                <div key={i} className="mb-1">{line}</div>
+              ))}
+            </div>
+            <div className="p-4 bg-gray-50 flex justify-end">
+              <button onClick={() => setDiagModalOpen(false)} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-medium transition-colors">
+                Закрыть
+              </button>
             </div>
           </div>
         </div>
@@ -627,18 +857,20 @@ export default function Settings() {
           <div className="p-6 space-y-4 max-w-lg">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.ofdProvider')}</label>
-              <select name="ofdProvider" value={formData.ofdProvider} onChange={handleChange}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary bg-white">
-                <option value="none">{t('settings.noFiscal')}</option>
-                <option value="webkassa">{t('settings.webkassa')}</option>
-                <option value="mock">{t('settings.mockOfd')}</option>
-              </select>
+              <CustomSelect
+                value={formData.ofdProvider}
+                onChange={val => setFormData(p => ({ ...p, ofdProvider: val as any }))}
+                options={[
+                  { value: 'none', label: t('settings.noFiscal') },
+                  { value: 'webkassa', label: t('settings.webkassa') },
+                ]}
+              />
             </div>
 
             {formData.ofdProvider === 'webkassa' && (
               <div className="pt-2 border-t border-gray-100 space-y-4">
                 <div className="bg-orange-50 p-3 rounded-lg text-sm text-orange-800">
-                  Перед проверкой подключения обязательно нажмите кнопку <b>"Сохранить"</b> в самом низу страницы.
+                  Перед проверкой подключения обязательно нажмите кнопку <b>"Сохранить"</b>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.cashierLogin')}</label>
@@ -649,15 +881,15 @@ export default function Settings() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.cashierPassword')}</label>
                   <div className="relative">
                     <Input type={showOfdPassword ? 'text' : 'password'} name="ofdPassword" value={formData.ofdPassword} onChange={handleChange}
-                      className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary" />
+                      className="w-full px-3 py-2 pr-20 border rounded-lg focus:ring-2 focus:ring-primary" />
                     <button type="button" onClick={() => setShowOfdPassword(!showOfdPassword)}
-                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                      className="absolute right-10 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1">
                       {showOfdPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.znm')}</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ЗНМ (Уникальный номер кассы)</label>
                   <Input type="text" name="ofdCashboxId" value={formData.ofdCashboxId} onChange={handleChange}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary" placeholder="Уникальный номер кассы" />
                 </div>
@@ -682,9 +914,6 @@ export default function Settings() {
               </div>
             )}
 
-            {formData.ofdProvider === 'mock' && (
-              <div className="p-3 bg-blue-50 text-blue-700 text-sm rounded-lg">{t('settings.mockHint')}</div>
-            )}
 
             {/* Показ фискального статуса на чеке */}
             <div className="pt-4 border-t border-gray-100">
@@ -710,21 +939,21 @@ export default function Settings() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center">
               <Database className="w-5 h-5 text-amber-500 mr-2" />
-              <h2 className="font-semibold text-gray-800">Резервная копия базы данных</h2>
+              <h2 className="font-semibold text-gray-800">{t('settings.backupTitle')}</h2>
             </div>
             <div className="p-6 space-y-6">
               {/* Папка хранения */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Папка для хранения копий</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t('settings.backupFolder')}</label>
                 <div className="flex items-center gap-3">
                   <div className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 truncate">
-                    {backupDir || 'Загрузка...'}
+                    {backupDir || t('settings.backupLoading')}
                   </div>
                   <button
                     onClick={handleChooseBackupDir}
                     className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
                   >
-                    <FolderOpen className="w-4 h-4" /> Изменить
+                    <FolderOpen className="w-4 h-4" /> {t('settings.backupChange')}
                   </button>
                 </div>
               </div>
@@ -737,7 +966,7 @@ export default function Settings() {
                   className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
                 >
                   <Download className="w-5 h-5" />
-                  {backupLoading ? 'Создание...' : 'Создать копию'}
+                  {backupLoading ? t('settings.backupCreating') : t('settings.backupCreate')}
                 </button>
                 <button
                   onClick={handleRestoreBackup}
@@ -745,20 +974,46 @@ export default function Settings() {
                   className="flex-1 bg-white border-2 border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 px-6 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
                 >
                   <Upload className="w-5 h-5" />
-                  Восстановить из копии
+                  {t('settings.backupRestore')}
                 </button>
               </div>
 
               {/* Автобэкап */}
               <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Автоматическое копирование</label>
-                  <p className="text-xs text-gray-400 mt-0.5">Создавать копию автоматически раз в сутки</p>
+                <div className="flex-1">
+                  <label className="text-sm font-medium text-gray-700">{t('settings.backupAuto', 'Автокопирование')}</label>
+                  <p className="text-xs text-gray-400 mt-0.5">{t('settings.backupAutoDesc', 'Автоматическое сохранение копий')}</p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" checked={autoBackup} onChange={e => handleToggleAutoBackup(e.target.checked)} className="sr-only peer" />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-amber-400 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500" />
-                </label>
+                <div className="flex items-center gap-4">
+                  <CustomSelect
+                    value={autoBackupInterval}
+                    onChange={(val) => handleToggleAutoBackup(autoBackup, val)}
+                    className="w-40"
+                    options={[
+                      { value: 'daily', label: 'Раз в сутки' },
+                      { value: 'monthly', label: 'Раз в месяц' }
+                    ]}
+                  />
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={autoBackup} onChange={e => handleToggleAutoBackup(e.target.checked)} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-amber-400 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Удаление старых баз */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Очистка старых баз</label>
+                  <p className="text-xs text-gray-400 mt-0.5">Удаление баз старше 30 дней</p>
+                </div>
+                <button
+                  onClick={handleDeleteOldBackups}
+                  disabled={backupLoading}
+                  className="px-4 py-2 text-sm bg-red-50 hover:bg-red-100 text-red-600 font-medium rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" /> Удалить старые
+                </button>
               </div>
             </div>
           </div>
@@ -768,28 +1023,28 @@ export default function Settings() {
             <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
               <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                 <RefreshCcw className="w-4 h-4 text-gray-400" />
-                Последние копии
+                {t('settings.backupLatest')}
               </h2>
-              <button onClick={loadBackupData} className="text-xs text-primary hover:underline">Обновить</button>
+              <button onClick={loadBackupData} className="text-xs text-primary hover:underline">{t('settings.backupRefresh')}</button>
             </div>
             <div className="divide-y divide-gray-100">
               {backupList.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
                   <Database className="w-10 h-10 mx-auto mb-2 text-gray-200" />
-                  <p>Резервных копий ещё нет</p>
+                  <p>{t('settings.backupEmpty')}</p>
                 </div>
               ) : (
                 backupList.map((item, idx) => (
                   <div key={idx} className="p-4 flex items-center justify-between hover:bg-gray-50">
                     <div>
                       <div className="text-sm font-medium text-gray-800 flex items-center gap-2">
-                        {new Date(item.date).toLocaleString('ru-RU')}
-                        {item.auto && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">авто</span>}
+                        {new Date(item.date).toLocaleString(i18n.language === 'en' ? 'en-US' : (i18n.language === 'kk' ? 'kk-KZ' : 'ru-RU'))}
+                        {item.auto && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{t('settings.backupAutoBadge')}</span>}
                       </div>
                       <div className="text-xs text-gray-400 mt-0.5 truncate max-w-md">{item.path}</div>
                     </div>
                     <div className="text-xs text-gray-500">
-                      {(item.size / 1024 / 1024).toFixed(1)} МБ
+                      {(item.size / 1024 / 1024).toFixed(1)} {t('settings.backupMB')}
                     </div>
                   </div>
                 ))
@@ -804,40 +1059,40 @@ export default function Settings() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center">
             <Wifi className="w-5 h-5 text-green-500 mr-2" />
-            <h2 className="font-semibold text-gray-800">Сетевой режим</h2>
+            <h2 className="font-semibold text-gray-800">{t('settings.networkTitle')}</h2>
             <span className={`ml-3 text-xs px-2 py-0.5 rounded-full font-medium ${networkMode === 'server' ? 'bg-green-100 text-green-700'
               : networkMode === 'client' ? 'bg-blue-100 text-blue-700'
                 : 'bg-gray-100 text-gray-500'
               }`}>
-              {networkMode === 'server' ? 'Сервер' : networkMode === 'client' ? 'Клиент' : 'Отключено'}
+              {networkMode === 'server' ? t('settings.networkServerMode') : networkMode === 'client' ? t('settings.networkClientMode') : t('settings.networkDisabled')}
             </span>
           </div>
           <div className="p-6 space-y-8">
 
             {/* Сервер */}
             <div>
-              <h3 className="text-base font-bold text-gray-800 mb-1">⚡ Главный компьютер (сервер)</h3>
-              <p className="text-sm text-gray-500 mb-4">Включите режим сервера на одном компьютере. Остальные кассы подключатся к нему.</p>
+              <h3 className="text-base font-bold text-gray-800 mb-1">{t('settings.networkServerHeadline')}</h3>
+              <p className="text-sm text-gray-500 mb-4">{t('settings.networkServerDesc')}</p>
               {networkMode === 'server' ? (
                 <div className="space-y-4">
                   <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                    <div className="text-sm text-green-700 font-medium mb-2">✅ Сервер работает</div>
+                    <div className="text-sm text-green-700 font-medium mb-2">{t('settings.networkServerRunning')}</div>
                     <div className="text-2xl font-bold text-green-800 font-mono">{localIP}</div>
-                    <p className="text-xs text-green-600 mt-1">Сообщите этот адрес другим кассам для подключения</p>
+                    <p className="text-xs text-green-600 mt-1">{t('settings.networkServerShare')}</p>
                     {allIPs.length > 1 && (
                       <div className="mt-2 text-xs text-green-600">
-                        Другие адреса: {allIPs.filter(ip => ip !== localIP).join(', ')}
+                        {t('settings.networkServerOtherIPs')}{allIPs.filter(ip => ip !== localIP).join(', ')}
                       </div>
                     )}
                   </div>
                   <button onClick={handleStopServer} className="px-6 py-2.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-xl font-medium transition-colors">
-                    <WifiOff className="w-4 h-4 inline mr-2" />Остановить сервер
+                    <WifiOff className="w-4 h-4 inline mr-2" />{t('settings.networkServerStop')}
                   </button>
                 </div>
               ) : networkMode === 'standalone' ? (
                 <button onClick={handleStartServer} disabled={networkLoading} className="px-6 py-3 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white rounded-xl font-bold transition-colors flex items-center gap-2">
                   <Wifi className="w-5 h-5" />
-                  {networkLoading ? 'Запуск...' : 'Включить режим сервера'}
+                  {networkLoading ? t('settings.networkServerStarting') : t('settings.networkServerStart')}
                 </button>
               ) : null}
             </div>
@@ -846,21 +1101,21 @@ export default function Settings() {
 
             {/* Клиент */}
             <div>
-              <h3 className="text-base font-bold text-gray-800 mb-1">💻 Подключиться к серверу</h3>
-              <p className="text-sm text-gray-500 mb-4">Введите IP адрес главного компьютера и нажмите Подключиться</p>
+              <h3 className="text-base font-bold text-gray-800 mb-1">{t('settings.networkClientHeadline')}</h3>
+              <p className="text-sm text-gray-500 mb-4">{t('settings.networkClientDesc')}</p>
               {networkMode === 'client' ? (
                 <div className="space-y-4">
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                    <div className="text-sm text-blue-700 font-medium mb-1">✅ Подключено к серверу</div>
+                    <div className="text-sm text-blue-700 font-medium mb-1">{t('settings.networkClientConnected')}</div>
                     <div className="text-lg font-bold text-blue-800 font-mono">{serverIP}</div>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={handleTestConnection} disabled={connectionStatus === 'checking'} className="px-5 py-2.5 bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 rounded-xl font-medium transition-colors flex items-center gap-2">
                       {connectionStatus === 'checking' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-                      Проверить соединение
+                      {t('settings.networkClientTest')}
                     </button>
                     <button onClick={handleDisconnect} className="px-5 py-2.5 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-xl font-medium transition-colors">
-                      <WifiOff className="w-4 h-4 inline mr-2" />Отключиться
+                      <WifiOff className="w-4 h-4 inline mr-2" />{t('settings.networkClientDisconnect')}
                     </button>
                   </div>
                 </div>
@@ -871,12 +1126,12 @@ export default function Settings() {
                       className="flex-1 px-4 py-2.5 border rounded-xl text-lg font-mono" />
                     <button onClick={handleConnect} disabled={networkLoading} className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white rounded-xl font-bold transition-colors flex items-center gap-2">
                       {networkLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-                      Подключиться
+                      {t('settings.networkClientConnect')}
                     </button>
                   </div>
                   <button onClick={handleTestConnection} disabled={!serverIP.trim() || connectionStatus === 'checking'} className="px-5 py-2 bg-gray-50 text-gray-600 border hover:bg-gray-100 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-40">
                     {connectionStatus === 'checking' ? <Loader2 className="w-3 h-3 animate-spin" /> : connectionStatus === 'ok' ? <CheckCircle className="w-3 h-3 text-green-500" /> : connectionStatus === 'fail' ? <XCircle className="w-3 h-3 text-red-500" /> : <Wifi className="w-3 h-3" />}
-                    Проверить соединение
+                    {t('settings.networkClientTest')}
                   </button>
                 </div>
               ) : null}
@@ -884,19 +1139,19 @@ export default function Settings() {
 
             {/* Инструкция */}
             <div className="border-t border-gray-100 pt-6">
-              <h3 className="text-sm font-bold text-gray-600 mb-3">📖 Как подключить несколько касс</h3>
+              <h3 className="text-sm font-bold text-gray-600 mb-3" dangerouslySetInnerHTML={{ __html: t('settings.networkGuideTitle') }} />
               <div className="space-y-2 text-sm text-gray-500">
                 <div className="flex gap-3 items-start">
                   <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                  <span>На <b>главном</b> компьютере нажмите <b>«Включить режим сервера»</b> — появится IP адрес</span>
+                  <span dangerouslySetInnerHTML={{ __html: t('settings.networkGuideStep1') }} />
                 </div>
                 <div className="flex gap-3 items-start">
                   <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                  <span>На <b>остальных</b> кассах введите этот IP и нажмите <b>«Подключиться»</b></span>
+                  <span dangerouslySetInnerHTML={{ __html: t('settings.networkGuideStep2') }} />
                 </div>
                 <div className="flex gap-3 items-start">
                   <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                  <span>Готово! Все кассы работают с единой базой данных</span>
+                  <span dangerouslySetInnerHTML={{ __html: t('settings.networkGuideStep3') }} />
                 </div>
               </div>
             </div>
@@ -913,7 +1168,7 @@ export default function Settings() {
             <h2 className="font-semibold text-gray-800">{t('settings.language')}</h2>
           </div>
           <div className="p-6">
-            <div className="grid grid-cols-2 gap-4 max-w-md">
+            <div className="grid grid-cols-3 gap-4 max-w-2xl">
               <button
                 onClick={() => handleLanguageChange('ru')}
                 className={`flex flex-col items-center justify-center p-8 rounded-2xl border-2 transition-all ${currentLang === 'ru'
@@ -934,8 +1189,18 @@ export default function Settings() {
                 <span className="font-bold text-lg">{t('settings.langKk')}</span>
                 {currentLang === 'kk' && <CheckCircle className="w-5 h-5 mt-2 text-primary" />}
               </button>
+              <button
+                onClick={() => handleLanguageChange('en')}
+                className={`flex flex-col items-center justify-center p-8 rounded-2xl border-2 transition-all ${currentLang === 'en'
+                  ? 'border-primary bg-primary/5 text-primary ring-2 ring-primary/20'
+                  : 'border-gray-200 hover:border-primary/50 text-gray-600'}`}
+              >
+                <span className="text-4xl mb-3">EN</span>
+                <span className="font-bold text-lg">{t('settings.langEn')}</span>
+                {currentLang === 'en' && <CheckCircle className="w-5 h-5 mt-2 text-primary" />}
+              </button>
             </div>
-            <p className="text-sm text-gray-500 mt-4">Язык сохраняется автоматически и применяется ко всему интерфейсу без перезапуска.</p>
+            <p className="text-sm text-gray-500 mt-4">{t('settings.langHint')}</p>
           </div>
         </div>
       )}

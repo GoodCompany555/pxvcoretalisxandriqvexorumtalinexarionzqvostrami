@@ -54,19 +54,26 @@ async function processQueue() {
 
         // В реальном приложении здесь будет маппинг сохраненного payload на метод WebKassa (Check или ZReport)
         // Мы сохраняли упрощенный payload в pos.ts
-        if (payload.type === 'sell' || payload.type === 'return') {
+        if (payload.type === 'sale' || payload.type === 'sell' || payload.type === 'return') {
+          const type: 'sale' | 'return' = (payload.type === 'return') ? 'return' : 'sale';
+
           const fiscalResult = await webkassa.printTicket({
-            receiptNumber: Date.now(), // в реальной системе нужно брать номер из БД
-            type: payload.type === 'return' ? 'return' : 'sale',
+            id: item.receipt_id,
+            receiptNumber: Date.now(), // Fallback, though ExternalCheckNumber is more important
+            type: type,
             paymentType: payload.moneyCard > 0 && payload.moneyCash > 0 ? 'mixed' : payload.moneyCard > 0 ? 'card' : 'cash',
-            total: payload.moneyCard + payload.moneyCash,
-            cash: payload.moneyCash,
-            card: payload.moneyCard,
+            returnBasisDetails: payload.returnBasisDetails,
+            total: (payload.moneyCard || 0) + (payload.moneyCash || 0),
+            cash: payload.moneyCash || 0,
+            card: payload.moneyCard || 0,
             items: payload.positions.map((p: any) => ({
               name: p.positionName,
               quantity: p.count,
               price: p.price,
-              total: p.price * p.count - (p.discount || 0)
+              total: p.price * p.count - (p.discount || 0),
+              discount: p.discount,
+              markCode: p.markCode,
+              vatRate: p.taxPercent
             }))
           });
 

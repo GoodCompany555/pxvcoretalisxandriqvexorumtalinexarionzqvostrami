@@ -66,18 +66,22 @@
     "cross-env": "^7.0.3",
     "electron": "^29.1.0",
     "electron-builder": "^24.12.0",
+    "javascript-obfuscator": "^5.4.1",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.3.3",
     "vite": "^5.1.3",
     "vite-plugin-electron": "^0.28.4",
     "vite-plugin-electron-renderer": "^0.14.5",
+    "vite-plugin-javascript-obfuscator": "^3.1.0",
     "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.easykassa.pos",
     "productName": "EasyKassa",
+    "artifactName": "EasyKassa-Setup-${version}.${ext}",
     "copyright": "Copyright © 2026 EasyKassa",
+    "asar": true,
     "directories": {
       "output": "release"
     },
@@ -113,7 +117,7 @@
       {
         "provider": "github",
         "owner": "GoodCompany555",
-        "repo": "pos-system-kz"
+        "repo": "pxvcoretalisxandriqvexorumtalinexarionzqvostrami"
       }
     ]
   }

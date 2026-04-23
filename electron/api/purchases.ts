@@ -185,17 +185,21 @@ export function setupPurchasesHandlers() {
         // Update inventory and optionally update product purchase price
         const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?').all(id) as any[];
 
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+        if (!warehouseId) throw new Error('Основной склад не найден');
+
         for (const item of items) {
-          const currentInv = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND product_id = ?').get(companyId, item.product_id) as { quantity: number } | undefined;
+          const currentInv = db.prepare('SELECT quantity FROM inventory WHERE company_id = ? AND warehouse_id = ? AND product_id = ?').get(companyId, warehouseId, item.product_id) as { quantity: number } | undefined;
 
           if (!currentInv) {
             db.prepare(`
-              INSERT INTO inventory (id, company_id, product_id, quantity) VALUES (?, ?, ?, ?)
-            `).run(uuidv4(), companyId, item.product_id, item.quantity);
+              INSERT INTO inventory (id, company_id, warehouse_id, product_id, quantity) VALUES (?, ?, ?, ?, ?)
+            `).run(uuidv4(), companyId, warehouseId, item.product_id, item.quantity);
           } else {
             db.prepare(`
-              UPDATE inventory SET quantity = MAX(0, quantity + ?), updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND product_id = ?
-            `).run(item.quantity, companyId, item.product_id);
+              UPDATE inventory SET quantity = MAX(0, quantity + ?), updated_at = CURRENT_TIMESTAMP WHERE company_id = ? AND warehouse_id = ? AND product_id = ?
+            `).run(item.quantity, companyId, warehouseId, item.product_id);
           }
 
           // Update product's last purchase price automatically

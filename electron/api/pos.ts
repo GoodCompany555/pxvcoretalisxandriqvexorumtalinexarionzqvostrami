@@ -15,7 +15,7 @@ export function setupPosHandlers() {
 
       // Сначала ищем точное совпадение по штрихкоду
       let product = db.prepare(`
-        SELECT id, barcode, name, price_retail, measure_unit, is_weighable, is_marked
+        SELECT id, barcode, name, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, vat_rate
         FROM products 
         WHERE company_id = ? AND barcode = ? AND is_deleted = 0
       `).get(companyId, query);
@@ -23,7 +23,7 @@ export function setupPosHandlers() {
       // Если по штрихкоду не нашли — ищем по названию
       if (!product) {
         const products = db.prepare(`
-          SELECT id, barcode, name, price_retail, measure_unit, is_weighable, is_marked
+          SELECT id, barcode, name, price_retail, measure_unit, is_weighable, is_marked, is_alcohol, vat_rate
           FROM products 
           WHERE company_id = ? AND name LIKE ? AND is_deleted = 0
           LIMIT 10
@@ -98,12 +98,12 @@ export function setupPosHandlers() {
         db.prepare(`
           INSERT INTO receipts (
             id, company_id, shift_id, user_id, receipt_number, type, payment_type, 
-            total_amount, discount_amount, cash_amount, card_amount
+            total_amount, discount_amount, cash_amount, card_amount, cash_given, change_amount
           )
-          VALUES (?, ?, ?, ?, ?, 'sale', ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, 'sale', ?, ?, ?, ?, ?, ?, ?)
         `).run(
           receiptId, companyId, shiftId, userId, receiptNumber, paymentType,
-          totalAmount, globalDiscount, cashAmount, cardAmount
+          totalAmount, globalDiscount, cashAmount, cardAmount, data.cashGiven || 0, data.changeAmount || 0
         );
 
         const insertItem = db.prepare(`
@@ -111,15 +111,19 @@ export function setupPosHandlers() {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
+        const mainWarehouse = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(companyId) as { id: string };
+        const warehouseId = mainWarehouse?.id;
+        if (!warehouseId) throw new Error('Основной склад не найден');
+
         const updateInventory = db.prepare(`
           UPDATE inventory 
           SET quantity = MAX(0, quantity - ?), updated_at = CURRENT_TIMESTAMP
-          WHERE company_id = ? AND product_id = ?
+          WHERE company_id = ? AND warehouse_id = ? AND product_id = ?
         `);
 
         const insertInventory = db.prepare(`
-          INSERT OR IGNORE INTO inventory (id, company_id, product_id, quantity)
-          VALUES (?, ?, ?, ?)
+          INSERT OR IGNORE INTO inventory (id, company_id, warehouse_id, product_id, quantity)
+          VALUES (?, ?, ?, ?, ?)
         `);
 
         for (const item of items) {
@@ -129,9 +133,9 @@ export function setupPosHandlers() {
             item.discount, item.subtotal, item.mark_code || null
           );
 
-          const info = updateInventory.run(item.quantity, companyId, item.id);
+          const info = updateInventory.run(item.quantity, companyId, warehouseId, item.id);
           if (info.changes === 0) {
-            insertInventory.run(uuidv4(), companyId, item.id, -item.quantity);
+            insertInventory.run(uuidv4(), companyId, warehouseId, item.id, -item.quantity);
           }
         }
 
@@ -147,48 +151,7 @@ export function setupPosHandlers() {
 
       const processedReceiptId = transaction();
 
-      // 5. Фискализация чека через ОФД (WebKassa)
-      let ofdStatus = 'none';
-      let ofdTicketUrl = '';
-
-      try {
-        const ofdService = new WebkassaService(companyId);
-        const fiscalResult = await ofdService.printTicket({
-          receiptNumber,
-          type: 'sale',
-          paymentType: paymentType,
-          total: totalAmount,
-          cash: cashAmount,
-          card: cardAmount,
-          items: items.map((i: any) => ({
-            name: i.name,
-            quantity: i.quantity,
-            price: i.price_retail,
-            total: i.subtotal
-          }))
-        });
-
-        if (fiscalResult.success && fiscalResult.ticketUrl) {
-          ofdStatus = 'sent';
-          ofdTicketUrl = fiscalResult.ticketUrl;
-
-          db.prepare(`
-            UPDATE receipts 
-            SET ofd_status = ?, ofd_ticket_url = ?
-            WHERE id = ?
-          `).run(ofdStatus, ofdTicketUrl, processedReceiptId);
-
-        } else {
-          if (fiscalResult.error !== 'OFD Disabled') {
-            ofdStatus = 'pending';
-            db.prepare(`UPDATE receipts SET ofd_status = ? WHERE id = ?`).run(ofdStatus, processedReceiptId);
-          }
-        }
-      } catch (ofdError) {
-        log.error('OFD Error during sale', ofdError);
-      }
-
-      // 6. Получение данных для печати (чтобы вернуть на фронт для ручной или автопечати)
+      // 5. Подготовка данных для печати (заранее, чтобы вернуть даже при ошибке ОФД)
       let printData = null;
       try {
         const companyInfo = db.prepare(`
@@ -198,6 +161,21 @@ export function setupPosHandlers() {
         `).get(companyId) as any;
 
         const cashier = db.prepare(`SELECT full_name FROM users WHERE id = ?`).get(userId) as any;
+
+        // VAT Calculation
+        const companySettings = db.prepare('SELECT is_vat_payer, tax_regime FROM settings WHERE company_id = ?').get(companyId) as any;
+        const isVatPayer = !!companySettings?.is_vat_payer;
+        const taxRegime = companySettings?.tax_regime || 'СНР';
+
+        let calculatedVatTotal = 0;
+        if (isVatPayer) {
+          items.forEach((i: any) => {
+            const rate = parseFloat(i.vat_rate || '0');
+            if (rate > 0) {
+              calculatedVatTotal += Math.round(i.subtotal * (rate / (100 + rate)));
+            }
+          });
+        }
 
         printData = {
           companyName: companyInfo?.name || 'Магазин',
@@ -211,17 +189,102 @@ export function setupPosHandlers() {
             quantity: i.quantity,
             price: i.price_retail,
             total: i.subtotal,
+            vat_rate: i.vat_rate,
           })),
           totalAmount,
-          vatAmount: Math.round(totalAmount * 12 / 112),
+          vatAmount: calculatedVatTotal,
           cashAmount: cashAmount || 0,
           cardAmount: cardAmount || 0,
           paymentType,
-          ofdTicketUrl: ofdTicketUrl || undefined,
+          taxRegime,
           date: new Date().toLocaleString('ru-RU'),
         };
       } catch (err) {
         log.error('Failed to prepare print data:', err);
+      }
+
+      // 6. Фискализация чека через ОФД (WebKassa)
+      let ofdStatus = 'none';
+      let ofdTicketUrl = '';
+
+      try {
+        const ofdService = new WebkassaService(companyId);
+        const fiscalItems = items.map((i: any) => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price_retail,
+          total: Math.round(((i.price_retail * i.quantity) - (i.discount || 0)) * 100) / 100,
+          discount: i.discount || 0,
+          markCode: i.mark_code,
+          vatRate: i.vat_rate
+        }));
+
+        log.info('Webkassa Sale Request Items:', JSON.stringify(fiscalItems));
+
+        const fiscalResult = await ofdService.printTicket({
+          id: processedReceiptId,
+          receiptNumber,
+          type: 'sale',
+          paymentType: paymentType,
+          total: totalAmount,
+          cash: cashAmount,
+          card: cardAmount,
+          items: fiscalItems
+        });
+
+        log.info('Webkassa Sale Result:', JSON.stringify(fiscalResult));
+
+        if (fiscalResult.success && fiscalResult.ticketUrl) {
+          ofdStatus = 'sent';
+          ofdTicketUrl = fiscalResult.ticketUrl;
+          const ofdFiscalNumber = fiscalResult.ticketNumber || '';
+          const ofdDateTime = fiscalResult.ofdDateTime || '';
+          const ofdRegistrationNumber = fiscalResult.ofdRegistrationNumber || '';
+
+          log.info(`SUCCESS: Fiscal number received for sale: ${ofdFiscalNumber}, DateTime: ${ofdDateTime}, RegNumber: ${ofdRegistrationNumber}`);
+
+          db.prepare(`
+            UPDATE receipts 
+            SET ofd_status = ?, ofd_ticket_url = ?, ofd_fiscal_number = ?, ofd_datetime = ?, ofd_registration_number = ?
+            WHERE id = ?
+          `).run(ofdStatus, ofdTicketUrl, ofdFiscalNumber, ofdDateTime, ofdRegistrationNumber, processedReceiptId);
+
+        } else {
+          if (fiscalResult.error !== 'OFD Disabled') {
+            ofdStatus = 'pending';
+            db.prepare(`UPDATE receipts SET ofd_status = ? WHERE id = ?`).run(ofdStatus, processedReceiptId);
+
+            const lastOfdError = fiscalResult.error || 'Ошибка ОФД';
+
+            // Добавляем в очередь
+            const ofdPayload = JSON.stringify({
+              type: 'sale',
+              moneyCard: cardAmount,
+              moneyCash: cashAmount,
+              positions: items.map((i: any) => ({
+                price: i.price_retail,
+                discount: i.discount,
+                count: i.quantity,
+                taxPercent: i.vat_rate || 0,
+                markCode: i.mark_code,
+                positionName: i.name
+              }))
+            });
+            db.prepare(`INSERT OR IGNORE INTO ofd_queue (id, receipt_id, payload) VALUES (?, ?, ?)`).run(uuidv4(), processedReceiptId, ofdPayload);
+
+            return {
+              success: true,
+              data: {
+                receiptId: processedReceiptId,
+                ofdStatus,
+                ofdError: lastOfdError,
+                printData: { ...printData, ofdTicketUrl: undefined }
+              }
+            };
+          }
+        }
+      } catch (ofdError) {
+        log.error('OFD Error during sale', ofdError);
       }
 
       return {
@@ -230,7 +293,7 @@ export function setupPosHandlers() {
           receiptId: processedReceiptId,
           ofdStatus,
           ofdTicketUrl,
-          printData
+          printData: { ...printData, ofdTicketUrl }
         }
       };
 
@@ -309,6 +372,58 @@ export function setupPosHandlers() {
     } catch (error) {
       log.error('Failed to reprint receipt:', error);
       return { success: false, error: 'Ошибка печати дубликата' };
+    }
+  });
+
+  // Отложить чек
+  registerRpc('pos:defer-receipt', async (_event, companyId: string, name: string, cartData: any[]) => {
+    try {
+      if (!db) throw new Error('Database not initialized');
+      const id = uuidv4();
+      db.prepare(`
+        INSERT INTO deferred_receipts (id, company_id, name, cart_data)
+        VALUES (?, ?, ?, ?)
+      `).run(id, companyId, name, JSON.stringify(cartData));
+      return { success: true };
+    } catch (error) {
+      log.error('Failed to defer receipt:', error);
+      return { success: false, error: 'Ошибка сохранения отложенного чека' };
+    }
+  });
+
+  // Получить список отложенных чеков
+  registerRpc('pos:get-deferred', async (_event, companyId: string) => {
+    try {
+      if (!db) throw new Error('Database not initialized');
+      const deferred = db.prepare(`
+        SELECT id, name, cart_data, created_at 
+        FROM deferred_receipts 
+        WHERE company_id = ? 
+        ORDER BY created_at DESC
+      `).all(companyId) as any[];
+
+      // Парсим JSON
+      const parsed = deferred.map(d => ({
+        ...d,
+        cart_data: JSON.parse(d.cart_data)
+      }));
+
+      return { success: true, data: parsed };
+    } catch (error) {
+      log.error('Failed to get deferred receipts:', error);
+      return { success: false, error: 'Ошибка загрузки отложенных чеков' };
+    }
+  });
+
+  // Удалить отложенный чек (например, при восстановлении)
+  registerRpc('pos:delete-deferred', async (_event, id: string) => {
+    try {
+      if (!db) throw new Error('Database not initialized');
+      db.prepare('DELETE FROM deferred_receipts WHERE id = ?').run(id);
+      return { success: true };
+    } catch (error) {
+      log.error('Failed to delete deferred receipt:', error);
+      return { success: false, error: 'Ошибка удаления' };
     }
   });
 }

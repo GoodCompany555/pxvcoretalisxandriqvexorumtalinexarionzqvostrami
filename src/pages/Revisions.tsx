@@ -5,19 +5,21 @@ import {
   ClipboardCheck,
   Plus,
   Eye,
-  Trash2,
   CheckCircle2,
   XCircle,
   Search,
   ArrowLeft,
-  Save,
-  BarChart3,
   AlertTriangle,
-  Printer
+  Printer,
+  ChevronRight,
+  Factory,
+  Tag,
+  Warehouse
 } from 'lucide-react';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Input } from '../components/ui/input';
-
+import NumPad from '../components/NumPad';
+import { useTranslation } from 'react-i18next';
 
 // ───── Types ─────
 interface Revision {
@@ -51,81 +53,63 @@ interface RevisionItem {
   status: string;
 }
 
-// ───── Status Badges ─────
-const statusLabel: Record<string, { text: string; color: string }> = {
-  draft: { text: '🟡 Черновик', color: 'bg-yellow-100 text-yellow-800' },
-  in_progress: { text: '🔵 В процессе', color: 'bg-blue-100 text-blue-800' },
-  completed: { text: '🟢 Завершена', color: 'bg-green-100 text-green-800' },
-  cancelled: { text: '🔴 Отменена', color: 'bg-red-100 text-red-800' },
-};
-
-const RevisionRow = ({ item, isEditable, onUpdate }: { item: RevisionItem, isEditable: boolean, onUpdate: (id: string, val: string) => void }) => {
-  const [localValue, setLocalValue] = useState(item.actual_quantity?.toString() ?? '');
-
-  useEffect(() => {
-    setLocalValue(item.actual_quantity?.toString() ?? '');
-  }, [item.actual_quantity]);
-
-  const handleChange = (val: string) => {
-    if (val !== '' && !/^\d*\.?\d*$/.test(val)) return;
-    setLocalValue(val);
-  };
-
-  const handleBlur = () => {
-    if (localValue === '') return;
-    const num = parseFloat(localValue);
-    if (!isNaN(num) && num >= 0) {
-      if (num !== item.actual_quantity) {
-        onUpdate(item.id, localValue);
-      }
-    }
-  };
-
-  return (
-    <tr className={item.status === 'counted' ? '' : 'bg-gray-50/50'}>
-      <td className="px-4 py-2 text-gray-500 font-mono text-xs">{item.product_barcode || '—'}</td>
-      <td className="px-4 py-2 font-medium">{item.product_name}</td>
-      <td className="px-4 py-2 text-center text-gray-500">{item.measure_unit}</td>
-      <td className="px-4 py-2 text-center font-bold">{item.system_quantity}</td>
-      <td className="px-4 py-2 text-center">
-        {isEditable ? (
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={localValue}
-            onChange={(e) => handleChange(e.target.value)}
-            onBlur={handleBlur}
-            className="w-20 text-center px-2 py-1 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none"
-            placeholder="___"
-          />
-        ) : (
-          <span className="font-bold">{item.actual_quantity ?? '—'}</span>
-        )}
-      </td>
-      <td className="px-4 py-2 text-center font-bold">
-        {item.difference != null ? (
-          <span className={item.difference < 0 ? 'text-red-600' : item.difference > 0 ? 'text-green-600' : 'text-gray-400'}>
-            {item.difference > 0 ? '+' : ''}{item.difference}
-          </span>
-        ) : (
-          <span className="text-gray-300">⏳</span>
-        )}
-      </td>
-    </tr>
-  );
-};
-
 export default function Revisions() {
+  const { t } = useTranslation();
   const { company, user } = useAuthStore();
+
+  // ───── Status Badges ─────
+  const statusLabel: Record<string, { text: string; color: string }> = {
+    draft: { text: `🟡 ${t('revision.status.draft')}`, color: 'bg-yellow-100 text-yellow-800' },
+    in_progress: { text: `🔵 ${t('revision.status.in_progress')}`, color: 'bg-blue-100 text-blue-800' },
+    completed: { text: `🟢 ${t('revision.status.completed')}`, color: 'bg-green-100 text-green-800' },
+    cancelled: { text: `🔴 ${t('revision.status.cancelled')}`, color: 'bg-red-100 text-red-800' },
+  };
+
+  const RevisionRow = ({ item, isEditable, onUpdate, onEditClick }: { item: RevisionItem, isEditable: boolean, onUpdate: (id: string, val: string) => void, onEditClick: (item: RevisionItem) => void }) => {
+    return (
+      <tr className={item.status === 'counted' ? '' : 'bg-gray-50/50'}>
+        <td className="px-4 py-2 text-gray-500 font-mono text-xs">{item.product_barcode || '—'}</td>
+        <td className="px-4 py-2 font-medium">{item.product_name}</td>
+        <td className="px-4 py-2 text-center text-gray-500">{item.measure_unit}</td>
+        <td className="px-4 py-2 text-center font-bold">{item.system_quantity}</td>
+        <td className="px-4 py-2 text-center">
+          {isEditable ? (
+            <button
+              onClick={() => onEditClick(item)}
+              className="min-w-[80px] text-center px-3 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-primary/20 outline-none transition-colors"
+            >
+              {item.actual_quantity ?? '___'}
+            </button>
+          ) : (
+            <span className="font-bold">{item.actual_quantity ?? '—'}</span>
+          )}
+        </td>
+        <td className="px-4 py-2 text-center font-bold">
+          {item.difference != null ? (
+            <span className={item.difference < 0 ? 'text-red-600' : item.difference > 0 ? 'text-green-600' : 'text-gray-400'}>
+              {item.difference > 0 ? '+' : ''}{item.difference}
+            </span>
+          ) : (
+            <span className="text-gray-300">⏳</span>
+          )}
+        </td>
+      </tr>
+    );
+  };
 
   // ───── State ─────
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'create' | 'detail'>('list');
   const [selectedRevision, setSelectedRevision] = useState<(Revision & { items: RevisionItem[] }) | null>(null);
-  const [revType, setRevType] = useState<'full' | 'category'>('full');
+  const [revType, setRevType] = useState<'full' | 'category' | 'supplier'>('full');
   const [search, setSearch] = useState('');
+  const [activeEditingItem, setActiveEditingItem] = useState<RevisionItem | null>(null);
+  const [editTempValue, setEditTempValue] = useState('');
+  const [categories, setCategories] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const autoSaveRef = useRef<NodeJS.Timeout | null>(null);
 
   // Confirm dialog (no native confirm!)
@@ -134,6 +118,8 @@ export default function Revisions() {
     title: string;
     message: string;
     onConfirm: () => void;
+    confirmText?: string;
+    cancelText?: string;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => { } });
 
   // ───── Load list ─────
@@ -149,10 +135,33 @@ export default function Revisions() {
 
   useEffect(() => { loadRevisions(); }, [loadRevisions]);
 
+  const loadCategories = useCallback(async () => {
+    if (!company?.id) return;
+    try {
+      const res = await (window as any).electronAPI.inventory.getCategories(company.id);
+      if (res.success) setCategories(res.data);
+    } catch { /* ignore */ }
+  }, [company?.id]);
+
+  const loadSuppliers = useCallback(async () => {
+    if (!company?.id) return;
+    try {
+      const res = await (window as any).electronAPI.suppliers.getAll(company.id);
+      if (res.success) setSuppliers(res.data);
+    } catch { /* ignore */ }
+  }, [company?.id]);
+
+  useEffect(() => {
+    if (view === 'create') {
+      loadCategories();
+      loadSuppliers();
+    }
+  }, [view, loadCategories, loadSuppliers]);
+
   // ───── Load detail ─────
   const openRevision = async (id: string) => {
     if (!company?.id) return;
-    const loader = toast.loading('Загрузка...');
+    const loader = toast.loading(t('common.loading'));
     try {
       const res = await (window as any).electronAPI.revisions.getOne(company.id, id);
       if (res.success) {
@@ -160,31 +169,40 @@ export default function Revisions() {
         setView('detail');
         toast.dismiss(loader);
       } else {
-        toast.error(res.error || 'Ошибка', { id: loader });
+        toast.error(res.error || t('common.error'), { id: loader });
       }
     } catch {
-      toast.error('Ошибка загрузки', { id: loader });
+      toast.error(t('common.error'), { id: loader });
     }
   };
 
-  // ───── Create ─────
   const handleCreate = async () => {
     if (!company?.id || !user?.id) return;
-    const loader = toast.loading('Создание ревизии...');
+    if (revType === 'category' && !selectedCategoryId) {
+      toast.error(t('warehouse.selectCategory'));
+      return;
+    }
+    if (revType === 'supplier' && !selectedSupplierId) {
+      toast.error(t('purchases.selectSupplier'));
+      return;
+    }
+    const loader = toast.loading(`${t('revision.start')}...`);
     try {
       const res = await (window as any).electronAPI.revisions.create({
         companyId: company.id,
         userId: user.id,
         type: revType,
+        categoryId: revType === 'category' ? selectedCategoryId : undefined,
+        supplierId: revType === 'supplier' ? selectedSupplierId : undefined,
       });
       if (res.success) {
-        toast.success('Ревизия создана', { id: loader });
+        toast.success(t('revision.successComplete'), { id: loader });
         await openRevision(res.data.id);
       } else {
-        toast.error(res.error || 'Ошибка', { id: loader });
+        toast.error(res.error || t('common.error'), { id: loader });
       }
     } catch (error: any) {
-      toast.error(`Фатальная ошибка: ${error.message}`, { id: loader });
+      toast.error(`${t('common.error')}: ${error.message}`, { id: loader });
       console.error(error);
     }
   };
@@ -192,8 +210,9 @@ export default function Revisions() {
   // ───── Update item ─────
   const handleUpdateItem = async (itemId: string, value: string) => {
     if (!selectedRevision) return;
-    const actualQuantity = parseFloat(value);
+    let actualQuantity = parseFloat(value);
     if (isNaN(actualQuantity) || actualQuantity < 0) return;
+    actualQuantity = Math.min(1000000, actualQuantity);
 
     try {
       const res = await (window as any).electronAPI.revisions.updateItem({
@@ -221,7 +240,6 @@ export default function Revisions() {
   // ───── Auto save trigger ─────
   useEffect(() => {
     if (view === 'detail' && selectedRevision && selectedRevision.status === 'draft') {
-      // The actual save happens per-item update, so auto-save just reloads from server
       autoSaveRef.current = setInterval(async () => {
         // Just keep alive — items are saved on each blur
       }, 30000);
@@ -237,30 +255,32 @@ export default function Revisions() {
 
     const uncounted = selectedRevision.items.filter(i => i.status === 'pending').length;
     const message = uncounted > 0
-      ? `Не проверено ${uncounted} товаров. Они будут пропущены. Завершить ревизию и применить результаты?`
-      : 'Завершить ревизию и применить результаты к складу?';
+      ? t('revision.uncountedMsg').replace('{{count}}', String(uncounted))
+      : t('revision.completeConfirmMsg');
 
     setConfirmDialog({
       isOpen: true,
-      title: 'Завершить ревизию',
+      title: t('revision.completeConfirmTitle'),
       message,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-        const loader = toast.loading('Применение результатов...');
+        const loader = toast.loading(t('common.loading'));
         try {
           const res = await (window as any).electronAPI.revisions.complete(company!.id, selectedRevision!.id);
           if (res.success) {
-            toast.success('Ревизия завершена. Остатки обновлены.', { id: loader });
+            toast.success(t('revision.successComplete'), { id: loader });
             setView('list');
             setSelectedRevision(null);
             loadRevisions();
           } else {
-            toast.error(res.error || 'Ошибка', { id: loader });
+            toast.error(res.error || t('common.error'), { id: loader });
           }
         } catch {
-          toast.error('Ошибка', { id: loader });
+          toast.error(t('common.error'), { id: loader });
         }
       },
+      confirmText: t('common.yes'),
+      cancelText: t('common.no')
     });
   };
 
@@ -269,26 +289,26 @@ export default function Revisions() {
     if (!company?.id || !selectedRevision) return;
     setConfirmDialog({
       isOpen: true,
-      title: 'Отменить ревизию',
-      message: 'Отменить ревизию? Изменения в остатках не будут применены.',
+      title: t('revision.cancelConfirmTitle'),
+      message: t('revision.cancelConfirmMsg'),
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isOpen: false }));
         try {
-          console.log('Отмена ревизии, ID:', selectedRevision.id);
           const result = await (window as any).electronAPI.cancelRevision(selectedRevision.id);
           if (result?.success) {
             await loadRevisions();
-            toast.success('Ревизия отменена');
+            toast.success(t('revision.successCancel'));
             setView('list');
             setSelectedRevision(null);
           } else {
-            toast.error(result?.message ?? 'Не удалось отменить ревизию');
+            toast.error(result?.message ?? t('common.error'));
           }
         } catch (error: any) {
-          console.error('Ошибка отмены:', error);
-          toast.error('Ошибка: ' + error.message);
+          toast.error(t('common.error') + ': ' + error.message);
         }
       },
+      confirmText: t('common.yes'),
+      cancelText: t('common.no')
     });
   };
 
@@ -320,7 +340,7 @@ export default function Revisions() {
       };
       await (window as any).electronAPI.printRevisionAct(printData);
     } catch (error: any) {
-      toast.error('Ошибка печати: ' + error.message);
+      toast.error(t('common.error') + ': ' + error.message);
     }
   };
 
@@ -331,42 +351,107 @@ export default function Revisions() {
   // ─── CREATE VIEW ───
   if (view === 'create') {
     return (
-      <div className="p-6 max-w-lg mx-auto">
-        <button onClick={() => setView('list')} className="flex items-center gap-1 text-primary hover:underline mb-6">
-          <ArrowLeft className="w-4 h-4" /> Назад к списку
-        </button>
-        <div className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
-          <h2 className="text-2xl font-bold flex items-center gap-2"><ClipboardCheck className="w-6 h-6" /> Новая ревизия</h2>
+      <div className="p-6 max-w-4xl mx-auto h-full flex flex-col">
+        <div className="flex items-center justify-between mb-8">
+          <button onClick={() => setView('list')} className="flex items-center gap-2 text-gray-500 hover:text-primary transition-colors font-medium">
+            <ArrowLeft className="w-5 h-5" /> {t('revision.backToList')}
+          </button>
+          <h2 className="text-2xl font-bold flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <ClipboardCheck className="w-6 h-6 text-primary" />
+            </div>
+            {t('revision.new')}
+          </h2>
+          <div className="w-24"></div> {/* Spacer */}
+        </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Тип ревизии</label>
-            <div className="flex gap-3">
-              {[
-                { value: 'full', label: 'Полная', desc: 'Все товары на складе' },
-                { value: 'category', label: 'По категории', desc: 'Только выбранная категория' },
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setRevType(opt.value as any)}
-                  className={`flex-1 p-4 rounded-xl border-2 text-left transition-all ${revType === opt.value ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-gray-300'}`}
-                >
-                  <div className="font-bold">{opt.label}</div>
-                  <div className="text-xs text-gray-500">{opt.desc}</div>
-                </button>
-              ))}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {[
+            { value: 'full', label: t('revision.full'), desc: t('revision.fullDesc'), icon: <Warehouse className="w-8 h-8" /> },
+            { value: 'category', label: t('revision.category'), desc: t('revision.categoryDesc'), icon: <Tag className="w-8 h-8" /> },
+            { value: 'supplier', label: t('purchases.supplier'), desc: t('revision.partialDesc'), icon: <Factory className="w-8 h-8" /> },
+          ].map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => {
+                setRevType(opt.value as any);
+                setSelectedCategoryId('');
+                setSelectedSupplierId('');
+              }}
+              className={`relative overflow-hidden group p-6 rounded-2xl border-2 text-left transition-all duration-300 ${revType === opt.value ? 'border-primary bg-primary/5 ring-4 ring-primary/5' : 'border-gray-100 bg-white hover:border-gray-300'}`}
+            >
+              <div className={`p-3 rounded-xl mb-4 inline-block transition-colors ${revType === opt.value ? 'bg-primary text-white' : 'bg-gray-50 text-gray-400 group-hover:text-primary'}`}>
+                {opt.icon}
+              </div>
+              <div className="font-bold text-lg mb-1">{opt.label}</div>
+              <div className="text-sm text-gray-500 leading-relaxed">{opt.desc}</div>
+              {revType === opt.value && (
+                <div className="absolute top-4 right-4 text-primary">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Selection Area */}
+        {revType !== 'full' && (
+          <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-xl shadow-gray-200/50 p-6 flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              {revType === 'category' ? t('warehouse.category') : t('purchases.supplier')}
+            </h3>
+
+            <div className="flex-1 overflow-auto pr-2 custom-scrollbar">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {(revType === 'category' ? categories : suppliers).map(item => {
+                  const isSelected = revType === 'category' ? selectedCategoryId === item.id : selectedSupplierId === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => revType === 'category' ? setSelectedCategoryId(item.id) : setSelectedSupplierId(item.id)}
+                      className={`flex items-center justify-between p-4 rounded-xl border text-left transition-all ${isSelected ? 'border-primary bg-primary/5 font-bold shadow-sm' : 'border-gray-100 bg-gray-50/50 hover:bg-gray-100 hover:border-gray-200'}`}
+                    >
+                      <span className="truncate">{item.name}</span>
+                      {isSelected && <CheckCircle2 className="w-4 h-4 text-primary shrink-0 ml-2" />}
+                      {!isSelected && <ChevronRight className="w-4 h-4 text-gray-300 shrink-0 ml-2" />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {(revType === 'category' ? categories : suppliers).length === 0 && (
+                <div className="text-center py-12 text-gray-400">
+                  {t('common.noData')}
+                </div>
+              )}
             </div>
           </div>
+        )}
 
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm text-yellow-700">
-            <AlertTriangle className="w-4 h-4 inline mr-1" />
-            При создании ревизии система зафиксирует текущие остатки всех товаров. Вы сможете вручную вводить фактическое количество.
+        {revType === 'full' && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center max-w-sm">
+              <div className="w-20 h-20 bg-primary/5 text-primary rounded-full flex items-center justify-center mx-auto mb-4">
+                <Warehouse className="w-10 h-10" />
+              </div>
+              <p className="text-gray-500">{t('revision.fullDesc')}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-8 flex items-center justify-between bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+          <div className="flex items-center gap-3 text-yellow-600 bg-yellow-50 px-4 py-2 rounded-xl text-sm border border-yellow-100">
+            <AlertTriangle className="w-5 h-5" />
+            <span>{t('revision.creationHint')}</span>
           </div>
 
           <button
             onClick={handleCreate}
-            className="w-full py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+            disabled={revType === 'category' ? !selectedCategoryId : revType === 'supplier' ? !selectedSupplierId : false}
+            className="px-10 py-4 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-primary/30 flex items-center gap-3"
           >
-            <ClipboardCheck className="w-5 h-5" /> Начать ревизию
+            {t('revision.start')}
+            <ChevronRight className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -390,13 +475,13 @@ export default function Revisions() {
             </button>
             <div>
               <h2 className="text-xl font-bold flex items-center gap-2">
-                Ревизия #{selectedRevision.id.slice(0, 6).toUpperCase()}
+                {t('revision.revisionNo')} #{selectedRevision.id.slice(0, 6).toUpperCase()}
                 <span className={`text-xs px-2 py-0.5 rounded-full ${statusLabel[selectedRevision.status]?.color || ''}`}>
                   {statusLabel[selectedRevision.status]?.text || selectedRevision.status}
                 </span>
               </h2>
               <p className="text-sm text-gray-500">
-                {new Date(selectedRevision.started_at).toLocaleString('ru-RU')} • {selectedRevision.user_name} • {selectedRevision.total_items} товаров
+                {new Date(selectedRevision.started_at).toLocaleString('ru-RU')} • {selectedRevision.user_name} • {selectedRevision.total_items} {t('revision.total_items').toLowerCase()}
               </p>
             </div>
           </div>
@@ -406,15 +491,15 @@ export default function Revisions() {
               onClick={() => handlePrint()}
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-medium flex items-center gap-2 transition-colors border border-gray-200"
             >
-              <Printer className="w-4 h-4" /> Акт ревизии
+              <Printer className="w-4 h-4" /> {t('revision.print')}
             </button>
             {isEditable && (
               <>
                 <button onClick={handleCancel} className="px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 font-medium flex items-center gap-1 transition-colors">
-                  <XCircle className="w-4 h-4" /> Отменить
+                  <XCircle className="w-4 h-4" /> {t('common.cancel')}
                 </button>
                 <button onClick={handleComplete} className="px-4 py-2 bg-primary text-white rounded-xl hover:bg-primary/90 font-medium flex items-center gap-1 transition-colors">
-                  <CheckCircle2 className="w-4 h-4" /> Завершить
+                  <CheckCircle2 className="w-4 h-4" /> {t('revision.complete')}
                 </button>
               </>
             )}
@@ -424,8 +509,8 @@ export default function Revisions() {
         {/* Progress bar */}
         <div className="mb-4 flex-shrink-0">
           <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
-            <span>Прогресс проверки</span>
-            <span className="font-bold">{progress}% ({summary?.counted || 0} из {selectedRevision.total_items})</span>
+            <span>{t('revision.progress')}</span>
+            <span className="font-bold">{progress}% ({summary?.counted || 0} / {selectedRevision.total_items})</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div className="bg-primary h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
@@ -436,21 +521,21 @@ export default function Revisions() {
         {summary && (
           <div className="grid grid-cols-4 gap-3 mb-4 flex-shrink-0">
             <div className="bg-white rounded-xl p-3 shadow-sm border">
-              <div className="text-xs text-gray-500">Совпало</div>
+              <div className="text-xs text-gray-500">{t('revision.matched')}</div>
               <div className="text-lg font-bold text-gray-800">{summary.matched}</div>
             </div>
             <div className="bg-red-50 rounded-xl p-3 shadow-sm border border-red-100">
-              <div className="text-xs text-red-500">Недостачи</div>
+              <div className="text-xs text-red-500">{t('revision.shortage')}</div>
               <div className="text-lg font-bold text-red-600">{summary.shortages}</div>
               <div className="text-xs text-red-400">−{summary.shortageAmount.toLocaleString('ru-RU')} ₸</div>
             </div>
             <div className="bg-green-50 rounded-xl p-3 shadow-sm border border-green-100">
-              <div className="text-xs text-green-500">Излишки</div>
+              <div className="text-xs text-green-500">{t('revision.surplus')}</div>
               <div className="text-lg font-bold text-green-600">{summary.surpluses}</div>
               <div className="text-xs text-green-400">+{summary.surplusAmount.toLocaleString('ru-RU')} ₸</div>
             </div>
             <div className="bg-blue-50 rounded-xl p-3 shadow-sm border border-blue-100">
-              <div className="text-xs text-blue-500">Итого разница</div>
+              <div className="text-xs text-blue-500">{t('revision.totalDiff')}</div>
               <div className={`text-lg font-bold ${(summary.surplusAmount - summary.shortageAmount) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {(summary.surplusAmount - summary.shortageAmount) >= 0 ? '+' : ''}{(summary.surplusAmount - summary.shortageAmount).toLocaleString('ru-RU')} ₸
               </div>
@@ -464,7 +549,7 @@ export default function Revisions() {
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Поиск по названию или штрихкоду..."
+            placeholder={t('revision.searchPlaceholder')}
             className="w-full pl-9 pr-4 py-2 border rounded-xl focus:ring-2 focus:ring-primary/20 outline-none text-sm"
           />
         </div>
@@ -474,20 +559,23 @@ export default function Revisions() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 sticky top-0">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Штрихкод</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Название</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600">Ед.</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600">По системе</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600">Факт</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600">Разница</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('revision.barcode')}</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">{t('revision.name')}</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600">{t('revision.unit')}</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600">{t('revision.system')}</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600">{t('revision.fact')}</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600">{t('revision.diff')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredItems.map(item => (
-                <RevisionRow key={item.id} item={item} isEditable={isEditable} onUpdate={handleUpdateItem} />
+                <RevisionRow key={item.id} item={item} isEditable={isEditable} onUpdate={handleUpdateItem} onEditClick={(i) => {
+                  setActiveEditingItem(i);
+                  setEditTempValue(i.actual_quantity?.toString() ?? '');
+                }} />
               ))}
               {filteredItems.length === 0 && (
-                <tr><td colSpan={6} className="text-center py-10 text-gray-400">Нет товаров</td></tr>
+                <tr><td colSpan={6} className="text-center py-10 text-gray-400">{t('revision.noProducts')}</td></tr>
               )}
             </tbody>
           </table>
@@ -500,9 +588,44 @@ export default function Revisions() {
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
           danger={true}
-          confirmText="Да"
-          cancelText="Отмена"
+          confirmText={t('common.yes')}
+          cancelText={t('common.cancel')}
         />
+
+        {/* Numpad Modal */}
+        {activeEditingItem && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setActiveEditingItem(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+                <h3 className="font-bold text-gray-900 border-b pb-2 mb-2">{activeEditingItem.product_name}</h3>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">{t('revision.system')}: <span className="font-bold text-gray-900">{activeEditingItem.system_quantity}</span></span>
+                  <span className="text-gray-500">{t('revision.unit')}: <span className="font-bold text-gray-900">{activeEditingItem.measure_unit}</span></span>
+                </div>
+              </div>
+              <div className="p-6">
+                <Input
+                  type="number"
+                  min="0"
+                  max="1000000"
+                  placeholder={t('revision.actualQty')}
+                  value={editTempValue}
+                  onChange={(e) => setEditTempValue(Math.min(1000000, Math.max(0, parseFloat(e.target.value) || 0)).toString())}
+                  className="w-full text-2xl font-bold bg-white focus:outline-none mb-2"
+                />
+                <NumPad
+                  value={editTempValue}
+                  onChange={setEditTempValue}
+                  maxValue={1000000}
+                  onEnter={() => {
+                    handleUpdateItem(activeEditingItem.id, editTempValue);
+                    setActiveEditingItem(null);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -512,40 +635,40 @@ export default function Revisions() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardCheck className="w-7 h-7" /> Ревизия товаров</h1>
-          <p className="text-gray-500 text-sm">Сверка фактических остатков с данными системы</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardCheck className="w-7 h-7" /> {t('revision.title')}</h1>
+          <p className="text-gray-500 text-sm">{t('revision.subtitle', 'Сверка фактических остатков с данными системы')}</p>
         </div>
         <button
           onClick={() => setView('create')}
           className="px-5 py-2.5 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 transition-colors flex items-center gap-2 shadow-lg shadow-primary/20"
         >
-          <Plus className="w-5 h-5" /> Создать ревизию
+          <Plus className="w-5 h-5" /> {t('revision.new')}
         </button>
       </div>
 
       {/* Table */}
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         {loading ? (
-          <div className="text-center py-20 text-gray-400">Загрузка...</div>
+          <div className="text-center py-20 text-gray-400">{t('common.loading')}</div>
         ) : revisions.length === 0 ? (
           <div className="text-center py-20 space-y-2">
             <ClipboardCheck className="w-12 h-12 text-gray-300 mx-auto" />
-            <p className="text-gray-400">Ревизий пока нет</p>
-            <p className="text-xs text-gray-300">Нажмите «Создать ревизию», чтобы начать первую инвентаризацию</p>
+            <p className="text-gray-400">{t('revision.empty')}</p>
+            <p className="text-xs text-gray-300">{t('revision.emptyHint')}</p>
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">№</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Дата</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Тип</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Статус</th>
-                <th className="text-center px-6 py-3 font-medium text-gray-600">Товаров</th>
-                <th className="text-right px-6 py-3 font-medium text-gray-600">Недостача</th>
-                <th className="text-right px-6 py-3 font-medium text-gray-600">Излишки</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Кто проводил</th>
-                <th className="text-center px-6 py-3 font-medium text-gray-600">Действия</th>
+                <th className="text-left px-6 py-3 font-medium text-gray-600">{t('revision.number')}</th>
+                <th className="text-left px-6 py-3 font-medium text-gray-600">{t('revision.date')}</th>
+                <th className="text-left px-6 py-3 font-medium text-gray-600">{t('revision.type')}</th>
+                <th className="text-left px-6 py-3 font-medium text-gray-600">{t('revision.status_label')}</th>
+                <th className="text-center px-6 py-3 font-medium text-gray-600">{t('revision.total_items')}</th>
+                <th className="text-right px-6 py-3 font-medium text-gray-600">{t('revision.shortage')}</th>
+                <th className="text-right px-6 py-3 font-medium text-gray-600">{t('revision.surplus')}</th>
+                <th className="text-left px-6 py-3 font-medium text-gray-600">{t('revision.executor')}</th>
+                <th className="text-center px-6 py-3 font-medium text-gray-600">{t('revision.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -553,7 +676,7 @@ export default function Revisions() {
                 <tr key={r.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openRevision(r.id)}>
                   <td className="px-6 py-4 font-mono text-xs">{revisions.length - idx}</td>
                   <td className="px-6 py-4 text-gray-600">{new Date(r.created_at).toLocaleDateString('ru-RU')}</td>
-                  <td className="px-6 py-4 text-gray-600">{r.revision_type === 'full' ? 'Полная' : 'Частичная'}</td>
+                  <td className="px-6 py-4 text-gray-600">{r.revision_type === 'full' ? t('revision.full') : t('revision.partial')}</td>
                   <td className="px-6 py-4">
                     <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusLabel[r.status]?.color || ''}`}>
                       {statusLabel[r.status]?.text || r.status}

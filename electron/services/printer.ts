@@ -23,6 +23,7 @@ export interface ReceiptPrintData {
   terminalBank?: string;
   ofdTicketUrl?: string;
   date: string;
+  taxRegime?: string;
 }
 
 export interface XReportData {
@@ -47,6 +48,8 @@ export interface XReportData {
   withdrawals: number;
   cashBalance: number;
   cardByBank: Record<string, number>;
+  vatAmount?: number;
+  ofdTicketUrl?: string;
 }
 
 /**
@@ -75,6 +78,9 @@ export async function printReceipt(data: ReceiptPrintData, companyId: string): P
     printer.bold(false);
     printer.println(`БИН: ${data.companyBin}`);
     printer.println(data.companyAddress);
+    if (data.taxRegime) {
+      printer.println(`Режим НП: ${data.taxRegime}`);
+    }
     printer.drawLine();
 
     // Чек
@@ -105,7 +111,7 @@ export async function printReceipt(data: ReceiptPrintData, companyId: string): P
 
     if (data.vatAmount > 0) {
       printer.tableCustom([
-        { text: 'В т.ч. НДС 12%:', align: 'LEFT', width: 0.5 },
+        { text: 'В т.ч. НДС:', align: 'LEFT', width: 0.5 },
         { text: `${Math.round(data.vatAmount)} ₸`, align: 'RIGHT', width: 0.5 },
       ]);
     }
@@ -223,7 +229,7 @@ export async function printXReport(data: XReportData, companyId: string): Promis
 /**
  * Печать Z-отчёта (аналогично X-отчёту + фискальный номер)
  */
-export async function printZReport(data: XReportData & { fiscalNumber?: string; openedAt?: string; closedAt?: string }, companyId: string): Promise<boolean> {
+export async function printZReport(data: XReportData & { fiscalNumber?: string; openedAt?: string; closedAt?: string; ofdTicketUrl?: string }, companyId: string): Promise<boolean> {
   try {
     const ThermalPrinter = require('node-thermal-printer');
     const printer = new ThermalPrinter.printer({
@@ -267,14 +273,28 @@ export async function printZReport(data: XReportData & { fiscalNumber?: string; 
     printer.bold(true);
     printer.println('═══════════════════════════');
     printer.println(`ИТОГО ЗА СМЕНУ: ${data.netRevenue} ₸`);
-    const vatAmount = Math.round(data.netRevenue * 12 / 112);
-    printer.println(`НДС 12%: ${vatAmount} ₸`);
+    if (data.vatAmount) {
+      printer.println(`ИТОГО НДС: ${Math.round(data.vatAmount)} ₸`);
+    } else {
+      // Fallback to 12% calculation if vatAmount is not provided but this is a legacy Z-report
+      const fallbackVat = Math.round(data.netRevenue * 12 / 112);
+      printer.println(`НДС (расч. 12%): ${fallbackVat} ₸`);
+    }
     printer.println('═══════════════════════════');
     printer.bold(false);
 
     printer.println(`Внесения: ${data.deposits} ₸`);
     printer.println(`Изъятия: ${data.withdrawals} ₸`);
     printer.println(`Наличных в кассе: ${data.cashBalance} ₸`);
+
+    // QR-код фискализации
+    if (data.ofdTicketUrl) {
+      printer.newLine();
+      printer.alignCenter();
+      printer.printQR(data.ofdTicketUrl, { cellSize: 6, correction: 'M' });
+      printer.println('Проверить отчет:');
+      printer.println(data.ofdTicketUrl);
+    }
 
     printer.alignCenter();
     printer.newLine();

@@ -10,9 +10,12 @@ import NktModal from '../components/NktModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { KeyboardIcon } from '../components/KeyboardIcon';
 import { Input } from '../components/ui/input';
+import { useTranslation } from 'react-i18next';
+import { CustomSelect } from '../components/ui/CustomSelect';
 
 
 export default function Inventory() {
+  const { t } = useTranslation();
   const { company } = useAuthStore();
   const { companyName } = useCompanyStore();
   const [products, setProducts] = useState<any[]>([]);
@@ -21,6 +24,9 @@ export default function Inventory() {
 
   // Форма добавления / редактирования
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
+  const [transferHistory, setTransferHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     barcode: '',
@@ -35,7 +41,12 @@ export default function Inventory() {
     alcohol_abv: '',
     alcohol_volume: '',
     initial_stock: '0',
+    vat_rate: '0',
+    supplier_id: '' as string,
+    category_id: '' as string,
   });
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [useInitialStock, setUseInitialStock] = useState(true);
   const [isNktModalOpen, setIsNktModalOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState({
@@ -181,10 +192,10 @@ export default function Inventory() {
       </head>
       <body>
         <div class="label">
-          <div class="header">${data.companyName || 'МАГАЗИН'}</div>
+          <div class="header">${data.companyName || t('warehouse.shop')}</div>
           <div class="product-name">${data.productName}</div>
           ${data.productNameKz ? `<div class="product-name-kz">${data.productNameKz}</div>` : ''}
-          <div class="unit">1 ${data.unit || 'шт'}</div>
+          <div class="unit">1 ${data.unit || t('warehouse.unitPcs')}</div>
           <div class="price">${priceFormatted} ₸</div>
           <div class="barcode-area">
             ${barcodeDataUrl
@@ -208,7 +219,7 @@ export default function Inventory() {
 
     const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
     if (!iframeDoc) {
-      toast.error('Не удалось создать окно печати');
+      toast.error(t('warehouse.printError'));
       document.body.removeChild(iframe);
       return;
     }
@@ -240,14 +251,58 @@ export default function Inventory() {
       if (res.success && res.data) {
         setProducts(res.data);
       } else {
-        toast.error(res.error || 'Ошибка загрузки товаров');
+        toast.error(res.error || t('warehouse.loadError'));
       }
     } catch (error) {
-      toast.error('Сбой при загрузке базы товаров');
+      toast.error(t('warehouse.loadErrorSystem'));
     } finally {
       setLoading(false);
     }
   };
+
+  const loadSuppliers = async () => {
+    if (!company?.id) return;
+    try {
+      const res = await window.electronAPI.suppliers.getAll(company.id);
+      if (res.success && res.data) {
+        setSuppliers(res.data);
+      }
+    } catch (error) {
+      console.error('Failed to load suppliers:', error);
+    }
+  };
+
+  const loadCategoriesFunc = async () => {
+    if (!company?.id) return;
+    try {
+      const res = await window.electronAPI.inventory.getCategories(company.id);
+      if (res.success && res.data) {
+        setCategories(res.data);
+      }
+    } catch (error) {
+      console.error('Failed to load categories:', error);
+    }
+  };
+
+  const loadTransferHistory = async (productId: string) => {
+    if (!company?.id) return;
+    setHistoryLoading(true);
+    try {
+      const res = await window.electronAPI.transfers.getProductHistory(company.id, productId);
+      if (res.success) {
+        setTransferHistory(res.data || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadCategoriesFunc();
+  }, [company?.id]);
 
   useEffect(() => {
     // Дебоунсинг для поиска
@@ -262,11 +317,11 @@ export default function Inventory() {
     if (!company?.id) return;
 
     if (!formData.name || !formData.barcode || !formData.price_retail) {
-      toast.error('Заполните обязательные поля');
+      toast.error(t('warehouse.fillRequired'));
       return;
     }
 
-    const loadToast = toast.loading(editingProductId ? 'Обновление товара...' : 'Создание товара...');
+    const loadToast = toast.loading(editingProductId ? t('warehouse.updating') : t('warehouse.creating'));
     try {
       let res;
       if (editingProductId) {
@@ -283,7 +338,7 @@ export default function Inventory() {
       }
 
       if (res.success) {
-        toast.success(editingProductId ? 'Товар обновлён' : 'Товар успешно добавлен', { id: loadToast });
+        toast.success(editingProductId ? t('warehouse.updated') : t('warehouse.created'), { id: loadToast });
         setIsModalOpen(false);
         setEditingProductId(null);
         setUseInitialStock(true);
@@ -293,20 +348,23 @@ export default function Inventory() {
           name_kk: '',
           price_purchase: '',
           price_retail: '',
-          measure_unit: 'шт',
+          measure_unit: t('warehouse.unitPcs'),
           is_weighable: false,
           is_marked: false,
           is_alcohol: false,
           alcohol_abv: '',
           alcohol_volume: '',
           initial_stock: '0',
+          vat_rate: '0',
+          supplier_id: '',
+          category_id: '',
         });
         loadProducts();
       } else {
-        toast.error(res.error || 'Ошибка', { id: loadToast });
+        toast.error(res.error || t('warehouse.saveError'), { id: loadToast });
       }
     } catch (error) {
-      toast.error('Что-то пошло не так', { id: loadToast });
+      toast.error(t('warehouse.somethingWrong'), { id: loadToast });
     }
   };
 
@@ -323,11 +381,11 @@ export default function Inventory() {
     const { id } = confirmDialog;
     if (!company?.id || !id) return;
 
-    const loadToast = toast.loading('Удаление...');
+    const loadToast = toast.loading(t('warehouse.deleting'));
     try {
       const res = await window.electronAPI.inventory.deleteProduct(company.id, id);
       if (res.success) {
-        toast.success('Удалено', { id: loadToast });
+        toast.success(t('warehouse.deleted'), { id: loadToast });
 
         setSelectedProduct(null);
         setEditingProductId(null);
@@ -336,10 +394,10 @@ export default function Inventory() {
 
         loadProducts();
       } else {
-        toast.error(res.error || 'Ошибка при удалении', { id: loadToast });
+        toast.error(res.error || t('warehouse.deleteError'), { id: loadToast });
       }
     } catch (e) {
-      toast.error('Системная ошибка', { id: loadToast });
+      toast.error(t('warehouse.systemError'), { id: loadToast });
     }
   };
 
@@ -347,11 +405,11 @@ export default function Inventory() {
     e.preventDefault();
     if (!company?.id || !selectedProduct) return;
     if (!stockFormData.quantity || parseFloat(stockFormData.quantity) <= 0) {
-      toast.error('Введите корректное количество');
+      toast.error(t('warehouse.stockInvalidQty'));
       return;
     }
 
-    const loadToast = toast.loading('Обновление остатков...');
+    const loadToast = toast.loading(t('warehouse.stockUpdating'));
     try {
       const res = await window.electronAPI.inventory.updateStock({
         companyId: company.id,
@@ -362,15 +420,15 @@ export default function Inventory() {
       });
 
       if (res.success) {
-        toast.success('Остатки обновлены', { id: loadToast });
+        toast.success(t('warehouse.stockUpdated'), { id: loadToast });
         setIsStockModalOpen(false);
         setStockFormData({ type: 'add', quantity: '', reason: '' });
         loadProducts();
       } else {
-        toast.error(res.error || 'Ошибка обновления', { id: loadToast });
+        toast.error(res.error || t('warehouse.stockUpdateError'), { id: loadToast });
       }
     } catch (error) {
-      toast.error('Произошла ошибка', { id: loadToast });
+      toast.error(t('warehouse.stockError'), { id: loadToast });
     }
   };
 
@@ -380,9 +438,9 @@ export default function Inventory() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-3">
             <Package className="w-8 h-8 text-primary" />
-            Склад и Товары
+            {t('warehouse.title')}
           </h1>
-          <p className="text-gray-500 mt-1">Управление номенклатурой и остатками базы</p>
+          <p className="text-gray-500 mt-1">{t('warehouse.subtitle')}</p>
         </div>
       </div>
 
@@ -392,7 +450,7 @@ export default function Inventory() {
           <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <Input
             type="text"
-            placeholder="Поиск по штрихкоду или названию..."
+            placeholder={t('warehouse.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-10 pr-10 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-sm transition-all"
@@ -405,32 +463,36 @@ export default function Inventory() {
           className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm whitespace-nowrap"
         >
           <Globe className="w-5 h-5 text-blue-500" />
-          Нац. каталог
+          {t('warehouse.national_catalog')}
         </button>
 
         <button
           onClick={() => {
             setEditingProductId(null);
+            setActiveTab('info');
             setFormData({
               barcode: '',
               name: '',
               name_kk: '',
               price_purchase: '',
               price_retail: '',
-              measure_unit: 'шт',
+              measure_unit: t('warehouse.unitPcs'),
               is_weighable: false,
               is_marked: false,
               is_alcohol: false,
               alcohol_abv: '',
               alcohol_volume: '',
               initial_stock: '0',
+              vat_rate: '0',
+              supplier_id: '',
+              category_id: '',
             });
             setIsModalOpen(true);
           }}
           className="bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm whitespace-nowrap"
         >
           <Plus className="w-5 h-5" />
-          Новый товар
+          {t('warehouse.new_product')}
         </button>
       </div>
 
@@ -440,25 +502,25 @@ export default function Inventory() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50 border-b border-gray-100 text-xs uppercase text-gray-500 font-semibold tracking-wider">
-                <th className="px-6 py-4">Штрихкод</th>
-                <th className="px-6 py-4">Наименование</th>
-                <th className="px-6 py-4 min-w-[120px]">Категория</th>
-                <th className="px-6 py-4 text-right">Закупка</th>
-                <th className="px-6 py-4 text-right">Розница</th>
-                <th className="px-6 py-4">Остаток</th>
-                <th className="px-6 py-4 text-center">Действия</th>
+                <th className="px-6 py-4">{t('warehouse.barcode')}</th>
+                <th className="px-6 py-4">{t('warehouse.name')}</th>
+                <th className="px-6 py-4 min-w-[120px]">{t('warehouse.category')}</th>
+                <th className="px-6 py-4 text-right">{t('warehouse.purchase_price')}</th>
+                <th className="px-6 py-4 text-right">{t('warehouse.retail_price')}</th>
+                <th className="px-6 py-4">{t('warehouse.remainder')}</th>
+                <th className="px-6 py-4 text-center">{t('warehouse.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-10 text-gray-500">Загрузка...</td>
+                  <td colSpan={7} className="text-center py-10 text-gray-500">{t('warehouse.loading')}</td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-10 text-gray-500">
-                    Товары не найдены
-                    <div className="mt-2 text-sm text-gray-400">Попробуйте изменить параметры поиска или добавить новый товар</div>
+                    {t('warehouse.noProducts')}
+                    <div className="mt-2 text-sm text-gray-400">{t('warehouse.noProductsHint')}</div>
                   </td>
                 </tr>
               ) : (
@@ -469,9 +531,9 @@ export default function Inventory() {
                       <div className="font-medium text-gray-900">{p.name}</div>
                       {p.name_kk && <div className="text-xs text-gray-500 mt-0.5">{p.name_kk}</div>}
                       <div className="flex gap-2 mt-1">
-                        {p.is_weighable === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium">Весовой</span>}
-                        {p.is_marked === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">Маркировка (КМ)</span>}
-                        {p.is_alcohol === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 font-medium">Алкоголь</span>}
+                        {p.is_weighable === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium">{t('warehouse.weighable')}</span>}
+                        {p.is_marked === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">{t('warehouse.marked')}</span>}
+                        {p.is_alcohol === 1 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 font-medium">{t('warehouse.alcohol')}</span>}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">{p.category_name || '-'}</td>
@@ -492,14 +554,14 @@ export default function Inventory() {
                           setIsStockModalOpen(true);
                         }}
                         className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
-                        title="Движение товара (Приход/Списание)"
+                        title={t('warehouse.stockMovement')}
                       >
                         <Package className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => {
                           printLabel({
-                            companyName: companyName || company?.name || 'МАГАЗИН',
+                            companyName: companyName || company?.name || t('warehouse.shop'),
                             productName: p.name,
                             productNameKz: p.name_kk || '',
                             unit: p.measure_unit || 'шт',
@@ -509,13 +571,15 @@ export default function Inventory() {
                         }}
 
                         className="p-1.5 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded transition-colors"
-                        title="Печать этикетки"
+                        title={t('warehouse.printLabel')}
                       >
                         <Printer className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => {
                           setEditingProductId(p.id);
+                          setActiveTab('info');
+                          loadTransferHistory(p.id);
                           setUseInitialStock(false);
                           setFormData({
                             barcode: p.barcode,
@@ -530,18 +594,21 @@ export default function Inventory() {
                             alcohol_abv: p.alcohol_abv?.toString() || '',
                             alcohol_volume: p.alcohol_volume?.toString() || '',
                             initial_stock: '',
+                            vat_rate: p.vat_rate?.toString() || '0',
+                            supplier_id: p.supplier_id || '',
+                            category_id: p.category_id || '',
                           });
                           setIsModalOpen(true);
                         }}
                         className="p-1.5 text-gray-400 hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                        title="Редактировать"
+                        title={t('warehouse.editProduct')}
                       >
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDeleteClick(p.id, p.name)}
                         className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                        title="Удалить"
+                        title={t('warehouse.deleteProduct')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -561,132 +628,231 @@ export default function Inventory() {
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <Package className="w-5 h-5 text-primary" />
-                {editingProductId ? 'Редактирование товара' : 'Новая карточка товара'}
+                {editingProductId ? t('warehouse.editTitle') : t('warehouse.addEditTitle')}
               </h2>
               <button onClick={() => { setIsModalOpen(false); setEditingProductId(null); }} className="text-gray-400 hover:text-gray-600 text-lg font-bold p-2">&times;</button>
             </div>
 
-            <form onSubmit={handleCreateProduct} className="p-6 overflow-y-auto flex-1 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Наименование <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <Input required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="Сникерс 50г" />
-                    <KeyboardIcon />
-                  </div>
-                </div>
+            {editingProductId && (
+              <div className="px-6 pt-2 border-b border-gray-100 flex gap-4">
+                <button
+                  onClick={() => setActiveTab('info')}
+                  className={`pb-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'info' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                  Информация
+                </button>
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className={`pb-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'history' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                  История перемещений
+                </button>
+              </div>
+            )}
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Наименование (Қаз)</label>
-                  <div className="relative">
-                    <Input value={formData.name_kk} onChange={e => setFormData({ ...formData, name_kk: e.target.value })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="Сникерс 50г" />
-                    <KeyboardIcon />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Штрихкод <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <Input required value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="460000000000" />
-                    <KeyboardIcon />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Единица измерения</label>
-                  <select value={formData.measure_unit} onChange={e => setFormData({ ...formData, measure_unit: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none bg-white">
-                    <option value="шт">Штуки (шт)</option>
-                    <option value="кг">Килограммы (кг)</option>
-                    <option value="л">Литры (л)</option>
-                    <option value="м">Метры (м)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Закупочная цена (₸)</label>
-                  <div className="relative">
-                    <Input value={formData.price_purchase} onChange={e => setFormData({ ...formData, price_purchase: e.target.value })} type="number" min="0" step="1" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0" />
-                    <KeyboardIcon />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Розничная цена (₸) <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <Input required value={formData.price_retail} onChange={e => setFormData({ ...formData, price_retail: e.target.value })} type="number" min="0" step="1" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0" />
-                    <KeyboardIcon />
-                  </div>
-                </div>
-
-                {!editingProductId && (
-                  <div className="col-span-2 pt-2">
-                    <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors border border-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={useInitialStock}
-                        onChange={e => setUseInitialStock(e.target.checked)}
-                        className="rounded text-primary focus:ring-primary w-5 h-5 cursor-pointer"
-                      />
-                      <span className="text-sm font-medium text-gray-800">Задать начальный остаток сразу</span>
-                    </label>
-
-                    {useInitialStock && (
-                      <div className="mt-3 pl-[3.25rem] animate-in slide-in-from-top-2">
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Количество на складе: </label>
-                        <Input required min="0" value={formData.initial_stock} onChange={e => setFormData({ ...formData, initial_stock: Math.max(0, Number(e.target.value)).toString() })} type="number" step="any" className="w-48 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="col-span-2 border-t border-gray-100 pt-4 mt-2 grid grid-cols-2 gap-4">
-                  <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-blue-50/50 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={formData.is_weighable} onChange={e => setFormData({ ...formData, is_weighable: e.target.checked })} className="rounded text-primary focus:ring-primary" />
-                      <span className="text-sm border-b border-dashed border-gray-400 font-medium">Весовой товар</span>
+            {activeTab === 'info' ? (
+              <form onSubmit={handleCreateProduct} className="p-6 overflow-y-auto flex-1 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.productName')} <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                      <Input required maxLength={75} value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="Сникерс 50г" />
+                      <KeyboardIcon />
                     </div>
-                    <span className="text-xs text-gray-500 pl-6">Количество может быть дробным</span>
-                  </label>
+                  </div>
 
-                  <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-purple-50/50 transition-colors col-span-2">
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={formData.is_marked} onChange={e => setFormData({ ...formData, is_marked: e.target.checked })} className="rounded text-primary focus:ring-primary" />
-                      <span className="text-sm border-b border-dashed border-gray-400 font-medium">Подлежит маркировке (DataMatrix)</span>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.productNameKk')}</label>
+                    <div className="relative">
+                      <Input maxLength={75} value={formData.name_kk} onChange={e => setFormData({ ...formData, name_kk: e.target.value })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="Сникерс 50г" />
+                      <KeyboardIcon />
                     </div>
-                    <span className="text-xs text-gray-500 pl-6">Табак, обувь, алкоголь (контроль КМ)</span>
-                  </label>
+                  </div>
 
-                  <div className="col-span-2 space-y-3">
-                    <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-red-50/50 transition-colors">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.barcodeLabel')} <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                      <Input required maxLength={13} value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value.substring(0, 13) })} type="text" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="460000000000" />
+                      <KeyboardIcon />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.measureUnit')}</label>
+                    <CustomSelect
+                      value={formData.measure_unit}
+                      onChange={val => setFormData(p => ({ ...p, measure_unit: val }))}
+                      options={[
+                        { value: 'шт', label: t('warehouse.unitPcs') },
+                        { value: 'кг', label: t('warehouse.unitKg') },
+                        { value: 'л', label: t('warehouse.unitL') },
+                        { value: 'м', label: t('warehouse.unitM') },
+                        { value: 'уп', label: t('warehouse.unitPack') },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.purchasePrice')}</label>
+                    <div className="relative">
+                      <Input value={formData.price_purchase} onChange={e => {
+                        const val = e.target.value === '' ? '' : Math.min(1000000, parseFloat(e.target.value) || 0).toString();
+                        setFormData({ ...formData, price_purchase: val });
+                      }} type="number" min="0" max="1000000" step="1" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0" />
+                      <KeyboardIcon />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.retailPrice')} <span className="text-red-500">*</span></label>
+                    <div className="relative">
+                      <Input required value={formData.price_retail} onChange={e => {
+                        const val = e.target.value === '' ? '' : Math.min(1000000, parseFloat(e.target.value) || 0).toString();
+                        setFormData({ ...formData, price_retail: val });
+                      }} type="number" min="0" max="1000000" step="1" className="w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0" />
+                      <KeyboardIcon />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.vatRate')}</label>
+                    <CustomSelect
+                      value={formData.vat_rate}
+                      onChange={val => setFormData({ ...formData, vat_rate: val })}
+                      options={[
+                        { value: '16', label: '16%' },
+                        { value: 'Exempt', label: t('warehouse.vatRateExempt') },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.category')} <span className="text-red-500">*</span></label>
+                    <CustomSelect
+                      value={formData.category_id}
+                      onChange={val => setFormData({ ...formData, category_id: val })}
+                      options={[
+                        { value: '', label: '— ' + t('warehouse.selectCategory') + ' —' },
+                        ...categories.map(c => ({ value: c.id, label: c.name }))
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('purchases.supplier')}</label>
+                    <CustomSelect
+                      value={formData.supplier_id}
+                      onChange={val => setFormData({ ...formData, supplier_id: val })}
+                      options={[
+                        { value: '', label: '— ' + t('purchases.selectSupplier') + ' —' },
+                        ...suppliers.map(s => ({ value: s.id, label: s.name }))
+                      ]}
+                    />
+                  </div>
+
+                  {!editingProductId && (
+                    <div className="col-span-2 pt-2">
+                      <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors border border-gray-100">
+                        <input
+                          type="checkbox"
+                          checked={useInitialStock}
+                          onChange={e => setUseInitialStock(e.target.checked)}
+                          className="rounded text-primary focus:ring-primary w-5 h-5 cursor-pointer"
+                        />
+                        <span className="text-sm font-medium text-gray-800">{t('warehouse.initialStockEnabled')}</span>
+                      </label>
+
+                      {useInitialStock && (
+                        <div className="mt-3 pl-[3.25rem] animate-in slide-in-from-top-2">
+                          <label className="block text-xs font-medium text-gray-500 mb-1">{t('warehouse.currentStock')}: </label>
+                          <Input required min="0" max="1000000" value={formData.initial_stock} onChange={e => setFormData({ ...formData, initial_stock: Math.min(1000000, Math.max(0, Number(e.target.value))).toString() })} type="number" step="any" className="w-48 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="col-span-2 border-t border-gray-100 pt-4 mt-2 grid grid-cols-2 gap-4">
+                    <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-blue-50/50 transition-colors">
                       <div className="flex items-center gap-2">
-                        <input type="checkbox" checked={formData.is_alcohol} onChange={e => setFormData({ ...formData, is_alcohol: e.target.checked })} className="rounded text-primary focus:ring-primary" />
-                        <span className="text-sm border-b border-dashed border-gray-400 font-medium text-red-700">Алкогольная продукция</span>
+                        <input type="checkbox" checked={formData.is_weighable} onChange={e => setFormData({ ...formData, is_weighable: e.target.checked })} className="rounded text-primary focus:ring-primary" />
+                        <span className="text-sm border-b border-dashed border-gray-400 font-medium">{t('warehouse.isWeighable')}</span>
                       </div>
-                      <span className="text-xs text-gray-500 pl-6">Требует проверки возраста 21+ и учета объема</span>
+                      <span className="text-xs text-gray-500 pl-6">Количество может быть дробным</span>
                     </label>
 
-                    {formData.is_alcohol && (
-                      <div className="grid grid-cols-2 gap-4 pl-6 animate-in slide-in-from-top-2">
-                        <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Крепость (% об.)</label>
-                          <Input value={formData.alcohol_abv} onChange={e => setFormData({ ...formData, alcohol_abv: e.target.value })} type="number" step="0.1" className="w-full px-3 py-1.5 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="40.0" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Объем (л)</label>
-                          <Input value={formData.alcohol_volume} onChange={e => setFormData({ ...formData, alcohol_volume: e.target.value })} type="number" step="0.001" className="w-full px-3 py-1.5 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0.5" />
-                        </div>
+                    <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-purple-50/50 transition-colors col-span-2">
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={formData.is_marked} onChange={e => setFormData({ ...formData, is_marked: e.target.checked })} className="rounded text-primary focus:ring-primary" />
+                        <span className="text-sm border-b border-dashed border-gray-400 font-medium">{t('warehouse.isMarked')}</span>
                       </div>
-                    )}
+                      <span className="text-xs text-gray-500 pl-6">Табак, обувь, алкоголь (контроль КМ)</span>
+                    </label>
+
+                    <div className="col-span-2 space-y-3">
+                      <label className="flex flex-col gap-1 p-3 border border-gray-100 rounded-lg cursor-pointer hover:bg-red-50/50 transition-colors">
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" checked={formData.is_alcohol} onChange={e => setFormData({ ...formData, is_alcohol: e.target.checked })} className="rounded text-primary focus:ring-primary" />
+                          <span className="text-sm border-b border-dashed border-gray-400 font-medium text-red-700">{t('warehouse.isAlcohol')}</span>
+                        </div>
+                        <span className="text-xs text-gray-500 pl-6">Требует проверки возраста 21+ и учета объема</span>
+                      </label>
+
+                      {formData.is_alcohol && (
+                        <div className="grid grid-cols-2 gap-4 pl-6 animate-in slide-in-from-top-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">{t('warehouse.alcoholAbv')}</label>
+                            <Input value={formData.alcohol_abv} onChange={e => setFormData({ ...formData, alcohol_abv: e.target.value })} type="number" step="0.1" className="w-full px-3 py-1.5 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="40.0" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">{t('warehouse.alcoholVolume')}</label>
+                            <Input value={formData.alcohol_volume} onChange={e => setFormData({ ...formData, alcohol_volume: e.target.value })} type="number" step="0.001" className="w-full px-3 py-1.5 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="0.5" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
                 </div>
 
+                <div className="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium transition-colors">{t('warehouse.cancel')}</button>
+                  <button type="submit" className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl font-medium shadow-sm shadow-primary/30 transition-all active:scale-[0.98]">{t('warehouse.save')}</button>
+                </div>
+              </form>
+            ) : (
+              <div className="p-6 overflow-y-auto flex-1">
+                {historyLoading ? (
+                  <div className="text-center py-8 text-gray-500">Загрузка истории...</div>
+                ) : transferHistory.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    Товар еще не перемещался
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b text-gray-500">
+                        <th className="pb-2 font-medium">Дата и время</th>
+                        <th className="pb-2 font-medium">Откуда</th>
+                        <th className="pb-2 font-medium">Куда</th>
+                        <th className="pb-2 font-medium">Кол-во</th>
+                        <th className="pb-2 font-medium">Кто перенес</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {transferHistory.map((h, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="py-3">{new Date(h.date || h.created_at).toLocaleString('ru-RU')}</td>
+                          <td className="py-3">{h.from_warehouse_name}</td>
+                          <td className="py-3">{h.to_warehouse_name}</td>
+                          <td className="py-3 font-medium text-blue-600">{h.quantity}</td>
+                          <td className="py-3 text-gray-500">{h.created_by_name}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
-
-              <div className="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium transition-colors">Отмена</button>
-                <button type="submit" className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl font-medium shadow-sm shadow-primary/30 transition-all active:scale-[0.98]">Сохранить в базу</button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
       )}
@@ -696,14 +862,14 @@ export default function Inventory() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-xl font-bold">Движение товара</h2>
+              <h2 className="text-xl font-bold">{t('warehouse.stockTitle')}</h2>
               <button onClick={() => setIsStockModalOpen(false)} className="text-gray-400 hover:text-gray-600 font-bold p-2">&times;</button>
             </div>
 
             <form onSubmit={handleStockUpdate} className="p-6 flex-1 space-y-4">
               <div className="bg-blue-50 text-blue-800 p-3 rounded-xl border border-blue-100 flex justify-between items-center mb-4">
                 <span className="font-semibold">{selectedProduct.name}</span>
-                <span className="font-mono bg-white px-2 py-1 rounded shadow-sm text-sm border border-blue-200">Текущий остаток: {selectedProduct.stock_quantity}</span>
+                <span className="font-mono bg-white px-2 py-1 rounded shadow-sm text-sm border border-blue-200">{t('warehouse.currentStock')}: {selectedProduct.stock_quantity}</span>
               </div>
 
               <div>
@@ -713,44 +879,44 @@ export default function Inventory() {
                     type="button"
                     onClick={() => setStockFormData({ ...stockFormData, type: 'add' })}
                     className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${stockFormData.type === 'add' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                  >Приход</button>
+                  >{t('warehouse.stockAdd')}</button>
                   <button
                     type="button"
                     onClick={() => setStockFormData({ ...stockFormData, type: 'remove' })}
                     className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors ${stockFormData.type === 'remove' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                  >Списание</button>
+                  >{t('warehouse.stockRemove')}</button>
                   <button
                     type="button"
                     onClick={() => setStockFormData({ ...stockFormData, type: 'set' })}
                     className={`py-2 px-3 text-sm font-medium rounded-lg border transition-colors flex flex-col items-center justify-center ${stockFormData.type === 'set' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                  >Инвентариз.</button>
+                  >{t('warehouse.stockSet')}</button>
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {stockFormData.type === 'add' ? 'Какое количество добавить?' :
-                    stockFormData.type === 'remove' ? 'Какое количество списать?' :
-                      'Установить точный остаток:'}
+                  {stockFormData.type === 'add' ? t('warehouse.stockAdd') :
+                    stockFormData.type === 'remove' ? t('warehouse.stockRemove') :
+                      t('warehouse.stockSet')}:
                 </label>
                 <div className="flex items-center gap-3">
-                  <Input required value={stockFormData.quantity} onChange={e => setStockFormData({ ...stockFormData, quantity: Math.max(0, Number(e.target.value)).toString() })} type="number" step="any" min="0" className="flex-1 px-4 py-3 text-xl font-bold bg-gray-50 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" />
+                  <Input required value={stockFormData.quantity} onChange={e => setStockFormData({ ...stockFormData, quantity: Math.min(1000000, Math.max(0, Number(e.target.value))).toString() })} type="number" step="any" min="0" max="1000000" className="flex-1 px-4 py-3 text-xl font-bold bg-gray-50 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" />
                   <span className="text-gray-500 font-medium">{selectedProduct.measure_unit}</span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Основание / Комментарий (опционально)</label>
-                <Input value={stockFormData.reason} onChange={e => setStockFormData({ ...stockFormData, reason: e.target.value })} type="text" className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder="Приходная накладная №123" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('warehouse.stockReason')}</label>
+                <Input value={stockFormData.reason} onChange={e => setStockFormData({ ...stockFormData, reason: e.target.value })} type="text" className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/20 outline-none" placeholder={t('warehouse.stockReasonPlaceholder')} />
               </div>
 
               <div className="mt-6 pt-4 border-t border-gray-100 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsStockModalOpen(false)} className="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium transition-colors">Отмена</button>
+                <button type="button" onClick={() => setIsStockModalOpen(false)} className="px-5 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium transition-colors">{t('warehouse.cancel')}</button>
                 <button type="submit" className={`px-5 py-2.5 text-white rounded-xl font-medium shadow-sm transition-all active:scale-[0.98] ${stockFormData.type === 'add' ? 'bg-green-600 hover:bg-green-700 shadow-green-600/30' :
                   stockFormData.type === 'remove' ? 'bg-red-600 hover:bg-red-700 shadow-red-600/30' :
                     'bg-blue-600 hover:bg-blue-700 shadow-blue-600/30'
                   }`}>
-                  Провести
+                  {t('warehouse.stockApply')}
                 </button>
               </div>
             </form>
@@ -774,13 +940,16 @@ export default function Inventory() {
               name_kk: '',
               price_purchase: '',
               price_retail: '',
-              measure_unit: product.unit || 'шт',
+              measure_unit: product.unit || t('warehouse.unitPcs'),
               is_weighable: false,
               is_marked: false,
               is_alcohol: false,
               alcohol_abv: '',
               alcohol_volume: '',
               initial_stock: '0',
+              vat_rate: '0',
+              supplier_id: '',
+              category_id: '',
             });
             setUseInitialStock(true);
             setIsModalOpen(true);
@@ -792,8 +961,8 @@ export default function Inventory() {
       {/* Confirm Delete Modal */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
-        title="Удалить товар?"
-        message={`Вы уверены что хотите удалить "${confirmDialog.name}"? Это действие необратимо и может нарушить историю чеков.`}
+        title={t('warehouse.deleteTitle')}
+        message={t('warehouse.deleteMessage', { name: confirmDialog.name })}
         onConfirm={handleConfirmDelete}
         onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
         danger={true}

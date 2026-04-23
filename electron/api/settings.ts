@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { mainWindow } from '../main';
+import { mainWindow, encryptData, decryptData } from '../main';
 import { db } from '../database'
 import log from 'electron-log'
 
@@ -24,13 +24,26 @@ export function setupSettingsHandlers() {
       let settings = db.prepare(`
         SELECT 
           ofd_provider as ofdProvider,
-          ofd_token as ofdApiKey,
           ofd_login as ofdLogin,
           ofd_password as ofdPassword,
-          ofd_cashbox_id as ofdCashboxId
+          ofd_cashbox_id as ofdCashboxId,
+          is_vat_payer as isVatPayer,
+          vat_certificate_series as vatCertificateSeries,
+          vat_certificate_number as vatCertificateNumber,
+          vat_registered_at as vatRegisteredAt,
+          vat_certificate_issued_at as vatCertificateIssuedAt,
+          tax_regime as taxRegime,
+          is_kpn_payer as isKpnPayer,
+          is_excise_payer as isExcisePayer,
+          accounting_policy_start_date as accountingPolicyStartDate
         FROM settings
         WHERE company_id = ?
       `).get(companyId) as any;
+
+      // Дешифруем пароль ОФД перед отправкой на клиент
+      if (settings && settings.ofdPassword) {
+        settings.ofdPassword = decryptData(settings.ofdPassword);
+      }
 
       // Возвращаем комбинированный объект
       return {
@@ -39,10 +52,18 @@ export function setupSettingsHandlers() {
           ...company,
           ...(settings || {
             ofdProvider: 'none',
-            ofdApiKey: '',
             ofdLogin: '',
             ofdPassword: '',
-            ofdCashboxId: ''
+            ofdCashboxId: '',
+            isVatPayer: false,
+            vatCertificateSeries: '',
+            vatCertificateNumber: '',
+            vatRegisteredAt: null,
+            vatCertificateIssuedAt: null,
+            taxRegime: 'СНР',
+            isKpnPayer: false,
+            isExcisePayer: false,
+            accountingPolicyStartDate: null
           })
         }
       }
@@ -70,22 +91,41 @@ export function setupSettingsHandlers() {
         // Обновляем настройки
         // Если настроек еще нет, они должны были создаться при миграции V1 (seed), 
         // но на всякий случай используем INSERT OR REPLACE
+        // Шифруем пароль перед сохранением в БД
+        const safePassword = data.ofdPassword ? encryptData(data.ofdPassword) : '';
+
         db.prepare(`
           INSERT OR REPLACE INTO settings (
             company_id, 
             ofd_provider, 
-            ofd_token, 
             ofd_login, 
             ofd_password, 
-            ofd_cashbox_id
-          ) VALUES (?, ?, ?, ?, ?, ?)
+            ofd_cashbox_id,
+            is_vat_payer,
+            vat_certificate_series,
+            vat_certificate_number,
+            vat_registered_at,
+            vat_certificate_issued_at,
+            tax_regime,
+            is_kpn_payer,
+            is_excise_payer,
+            accounting_policy_start_date
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           data.companyId,
           data.ofdProvider,
-          data.ofdApiKey,
           data.ofdLogin,
-          data.ofdPassword,
-          data.ofdCashboxId
+          safePassword,
+          data.ofdCashboxId,
+          data.isVatPayer ? 1 : 0,
+          data.vatCertificateSeries,
+          data.vatCertificateNumber,
+          data.vatRegisteredAt,
+          data.vatCertificateIssuedAt,
+          data.taxRegime,
+          data.isKpnPayer ? 1 : 0,
+          data.isExcisePayer ? 1 : 0,
+          data.accountingPolicyStartDate
         );
       });
 

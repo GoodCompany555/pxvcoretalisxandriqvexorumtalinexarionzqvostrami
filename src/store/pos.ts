@@ -45,6 +45,8 @@ interface POSState {
   clearCart: () => void;
   // Установка общей скидки
   setGlobalDiscount: (discount: number) => void;
+  // Восстановление корзины из отложенной
+  restoreCart: (cart: CartItem[]) => void;
 }
 
 const calculateTotal = (cart: CartItem[], globalDiscount: number): { total: number, totalVat: number } => {
@@ -82,7 +84,7 @@ export const usePosStore = create<POSState>()(
         // Увеличиваем количество
         const newCart = [...state.cart];
         const item = newCart[existingItemIndex];
-        const newQuantity = item.quantity + quantity;
+        const newQuantity = Math.min(item.quantity + quantity, 1000000);
         item.quantity = newQuantity;
         item.subtotal = Math.max(0, (item.price_retail * newQuantity) - item.discount);
 
@@ -96,9 +98,9 @@ export const usePosStore = create<POSState>()(
       const newItem: CartItem = {
         ...product,
         cartItemId: crypto.randomUUID(),
-        quantity,
+        quantity: Math.min(quantity, 1000000),
         discount: 0,
-        subtotal: product.price_retail * quantity
+        subtotal: product.price_retail * Math.min(quantity, 1000000)
       };
 
       const newCart = [...state.cart, newItem];
@@ -111,7 +113,7 @@ export const usePosStore = create<POSState>()(
     updateItemQuantity: (cartItemId, quantity) => set((state) => {
       const newCart = state.cart.map(item => {
         if (item.cartItemId === cartItemId) {
-          const newQty = quantity > 0 ? quantity : 0;
+          const newQty = quantity > 0 ? Math.min(quantity, 1000000) : 0;
           return {
             ...item,
             quantity: newQty,
@@ -154,6 +156,11 @@ export const usePosStore = create<POSState>()(
     setGlobalDiscount: (globalDiscount) => set((state) => ({
       globalDiscount,
       ...calculateTotal(state.cart, globalDiscount)
+    })),
+
+    restoreCart: (cart) => set((state) => ({
+      cart,
+      ...calculateTotal(cart, state.globalDiscount)
     })),
   })
 )

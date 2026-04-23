@@ -97,7 +97,7 @@ export default function NktModal({ isOpen, onClose, onImport }: NktModalProps) {
               ref={inputRef}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Введите название или штрихкод GTIN/NTIN..."
+              placeholder="Введите штрихкод GTIN/NTIN товара"
               className="w-full pl-9 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-200 outline-none text-sm"
             />
             {loading && (

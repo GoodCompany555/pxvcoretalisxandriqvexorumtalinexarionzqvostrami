@@ -165,12 +165,45 @@ export function setupBackupHandlers() {
 
   // Автобэкап: получить/установить
   registerRpc('backup:get-auto', async () => {
-    return { success: true, data: { enabled: !!store.get('autoBackup') } };
+    return { success: true, data: { enabled: !!store.get('autoBackup'), interval: store.get('autoBackupInterval') || 'daily' } };
   });
 
-  registerRpc('backup:set-auto', async (_event, enabled: boolean) => {
+  registerRpc('backup:set-auto', async (_event, enabled: boolean, interval: string = 'daily') => {
     store.set('autoBackup', enabled);
+    store.set('autoBackupInterval', interval);
     return { success: true };
+  });
+
+  // Удалить старые бэкапы (> 30 дней)
+  registerRpc('backup:delete-old', async () => {
+    try {
+      const backupDir = (store.get('backupDir') as string) || getDefaultBackupDir();
+      if (!fs.existsSync(backupDir)) return { success: true, data: { deleted: 0 } };
+
+      const files = fs.readdirSync(backupDir);
+      let deletedCount = 0;
+      const now = Date.now();
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+      for (const file of files) {
+        if (!file.endsWith('.sqlite') && !file.endsWith('.sqlite-wal') && !file.includes('авто')) continue;
+        const filePath = path.join(backupDir, file);
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > THIRTY_DAYS_MS) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      }
+
+      const history = (store.get('backupHistory') as any[]) || [];
+      const validHistory = history.filter(item => fs.existsSync(item.path));
+      store.set('backupHistory', validHistory);
+
+      return { success: true, data: { deleted: deletedCount } };
+    } catch (error: any) {
+      log.error('Failed to delete old backups:', error);
+      return { success: false, error: 'Ошибка удаления старых файлов' };
+    }
   });
 }
 
@@ -181,13 +214,16 @@ export function startAutoBackupScheduler() {
   setInterval(() => {
     if (!store.get('autoBackup')) return;
 
+    const interval = (store.get('autoBackupInterval') as string) || 'daily';
     const lastBackup = store.get('lastAutoBackup') as string | undefined;
     const now = new Date();
 
     if (lastBackup) {
       const lastDate = new Date(lastBackup);
       const hoursSince = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
-      if (hoursSince < 24) return; // Ещё не прошли сутки
+
+      if (interval === 'monthly' && hoursSince < 24 * 30) return; // Ещё не прошел месяц
+      if (interval === 'daily' && hoursSince < 24) return; // Ещё не прошли сутки
     }
 
     // Выполняем автобэкап
@@ -221,6 +257,20 @@ export function startAutoBackupScheduler() {
       store.set('lastAutoBackup', now.toISOString());
 
       log.info(`Auto backup created: ${backupPath}`);
+
+      // Автоматическая очистка если включен автобэкап
+      // Вызываем встроенную логику очистки (без IPC-запроса)
+      const files = fs.readdirSync(backupDir);
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      for (const file of files) {
+        if (!file.endsWith('.sqlite') && !file.endsWith('.sqlite-wal') && !file.includes('авто')) continue;
+        const filePath = path.join(backupDir, file);
+        const stats = fs.statSync(filePath);
+        if (Date.now() - stats.mtimeMs > THIRTY_DAYS_MS) {
+          fs.unlinkSync(filePath);
+        }
+      }
+
     } catch (error) {
       log.error('Auto backup error:', error);
     }

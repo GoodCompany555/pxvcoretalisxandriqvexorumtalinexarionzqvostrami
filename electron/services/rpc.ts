@@ -27,11 +27,22 @@ export function getAllChannels(): string[] {
   return Array.from(handlers.keys());
 }
 
+import { app } from 'electron';
+
 export function registerRpc(channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<any> | any) {
   // Сохраняем обработчик для серверного режима
   handlers.set(channel, listener);
 
   ipcMain.handle(channel, async (event, ...args) => {
+    // Безопасность: блокируем левые вызовы (RCE protection)
+    if (app.isPackaged) {
+      const url = event.senderFrame?.url || '';
+      if (!url.startsWith('file://')) {
+        log.warn(`[SECURITY] Blocked IPC call to ${channel} from unauthorized URL: ${url}`);
+        return { success: false, error: 'Unauthorized IPC origin' };
+      }
+    }
+
     try {
       // Если мы клиент — перенаправляем запрос на сервер
       if (networkMode === 'client' && !channel.startsWith('network:') && !channel.startsWith('backup:') && channel !== 'app-version' && channel !== 'reset-printer') {

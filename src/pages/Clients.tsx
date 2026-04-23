@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { KeyboardIcon } from '../components/KeyboardIcon';
 import { Input } from '../components/ui/input';
+import { useTranslation } from 'react-i18next';
+import { formatPhone } from '../utils/formatters';
 
 
 interface Client {
@@ -17,6 +19,7 @@ interface Client {
 }
 
 export default function Clients() {
+  const { t } = useTranslation();
   const companyId = useAuthStore(state => state.company?.id);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +48,7 @@ export default function Clients() {
     if (res.success && res.data) {
       setClients(res.data);
     } else {
-      toast.error('Ошибка загрузки контрагентов');
+      toast.error(t('clients.loadError'));
     }
     setLoading(false);
   };
@@ -87,7 +90,7 @@ export default function Clients() {
       email,
     };
 
-    const loadingToast = toast.loading('Сохранение...');
+    const loadingToast = toast.loading(t('common.saving'));
 
     let res;
     if (editingClient) {
@@ -97,11 +100,11 @@ export default function Clients() {
     }
 
     if (res.success) {
-      toast.success('Успешно сохранено', { id: loadingToast });
+      toast.success(t('clients.saved'), { id: loadingToast });
       setIsModalOpen(false);
       fetchClients();
     } else {
-      toast.error(res.error || 'Ошибка', { id: loadingToast });
+      toast.error(res.error || t('common.error', 'Ошибка'), { id: loadingToast });
     }
   };
 
@@ -109,18 +112,18 @@ export default function Clients() {
     if (!companyId || !window.electronAPI?.clients) return;
     setConfirmDialog({
       isOpen: true,
-      title: 'Удалить контрагента',
-      message: `Вы уверены, что хотите удалить контрагента "${client.name}"?`,
+      title: t('clients.deleteTitle'),
+      message: t('clients.deleteMessage', { name: client.name }),
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isOpen: false }));
         const res = await window.electronAPI.clients.delete(companyId!, client.id);
         if (res.success) {
-          toast.success('Контрагент удален');
+          toast.success(t('clients.deleted'));
           fetchClients();
           window.dispatchEvent(new Event('blur'));
           setTimeout(() => window.dispatchEvent(new Event('focus')), 50);
         } else {
-          toast.error('Ошибка удаления');
+          toast.error(t('clients.deleteError'));
         }
       },
     });
@@ -134,15 +137,15 @@ export default function Clients() {
     <div className="p-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Контрагенты</h1>
-          <p className="text-gray-500 mt-1">Управление клиентами и партнерами (B2B)</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('clients.title')}</h1>
+          <p className="text-gray-500 mt-1">{t('clients.subtitle')}</p>
         </div>
         <button
           onClick={() => handleOpenModal()}
           className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl hover:bg-primary-hover transition-colors font-medium shadow-sm"
         >
           <Plus className="w-5 h-5" />
-          Добавить клиента
+          {t('clients.add')}
         </button>
       </div>
 
@@ -151,10 +154,10 @@ export default function Clients() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Наименование</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">БИН / ИИН</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Контакты</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Действия</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('clients.name')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('clients.bin')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('clients.contacts')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('clients.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -195,14 +198,14 @@ export default function Clients() {
                     <button
                       onClick={() => handleOpenModal(client)}
                       className="text-primary hover:text-primary-hover p-2 transition-colors mr-2"
-                      title="Редактировать"
+                      title={t('clients.edit', 'Редактировать')}
                     >
                       <Edit2 className="w-5 h-5" />
                     </button>
                     <button
                       onClick={() => handleDelete(client)}
                       className="text-red-500 hover:text-red-700 p-2 transition-colors"
-                      title="Удалить"
+                      title={t('clients.deleteLabel', 'Удалить')}
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
@@ -213,7 +216,7 @@ export default function Clients() {
                 <tr>
                   <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
                     <Users className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-                    <p>Список контрагентов пуст</p>
+                    <p>{t('clients.empty')}</p>
                   </td>
                 </tr>
               )}
@@ -227,7 +230,7 @@ export default function Clients() {
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900">
-                {editingClient ? 'Редактировать клиента' : 'Новый клиент'}
+                {editingClient ? t('clients.edit') : t('clients.new')}
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <Plus className="w-6 h-6 rotate-45" />
@@ -236,29 +239,30 @@ export default function Clients() {
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Наименование компании (или ФИО)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('clients.companyName')}</label>
                 <div className="relative">
                   <Input
                     type="text"
                     required
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => setName(e.target.value.substring(0, 75))}
                     className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                    placeholder="ТОО Ромашка"
+                    placeholder={t('clients.placeholderName', 'ТОО Ромашка')}
+                    maxLength={75}
                   />
                   <KeyboardIcon />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">БИН / ИИН</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('clients.bin')}</label>
                 <div className="relative">
                   <Input
                     type="text"
                     value={bin}
-                    onChange={(e) => setBin(e.target.value)}
+                    onChange={(e) => setBin(e.target.value.replace(/\D/g, '').substring(0, 12))}
                     className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary font-mono"
-                    placeholder="010101501501"
+                    placeholder={t('clients.placeholderBin', '010101501501')}
                     maxLength={12}
                   />
                   <KeyboardIcon />
@@ -266,14 +270,15 @@ export default function Clients() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Адрес (Юридический / Фактический)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('clients.address')}</label>
                 <div className="relative">
                   <Input
                     type="text"
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
+                    onChange={(e) => setAddress(e.target.value.substring(0, 75))}
                     className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                    placeholder="г. Алматы, ул. Абая 1"
+                    placeholder={t('clients.placeholderAddress', 'г. Алматы, ул. Абая 1')}
+                    maxLength={75}
                   />
                   <KeyboardIcon />
                 </div>
@@ -281,11 +286,11 @@ export default function Clients() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Телефон</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('clients.phone')}</label>
                   <Input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(formatPhone(e.target.value))}
                     className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
                     placeholder="+7 (...)"
                   />
@@ -308,13 +313,13 @@ export default function Clients() {
                   onClick={() => setIsModalOpen(false)}
                   className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-medium rounded-xl hover:bg-gray-200 transition-colors border border-gray-200"
                 >
-                  Отмена
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-4 py-2 bg-primary text-white font-medium rounded-xl hover:bg-primary-hover transition-colors"
                 >
-                  {editingClient ? 'Сохранить' : 'Добавить'}
+                  {editingClient ? t('clients.save') : t('clients.addBtn')}
                 </button>
               </div>
             </form>

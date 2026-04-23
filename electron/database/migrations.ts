@@ -92,6 +92,139 @@ export function runMigrations(db: Database.Database) {
     db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(13, 'cash_operations_table');
     log.info('Migration V13 applied: cash_operations_table');
   }
+
+  if (version < 14) {
+    migrationV14(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(14, 'resortings_table');
+    log.info('Migration V14 applied: resortings_table');
+  }
+
+  if (version < 15) {
+    migrationV15(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(15, 'receipts_cash_details');
+    log.info('Migration V15 applied: receipts_cash_details');
+  }
+
+  if (version < 16) {
+    migrationV16(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(16, 'performance_indexes');
+    log.info('Migration V16 applied: performance_indexes');
+  }
+
+  if (version < 17) {
+    migrationV17(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(17, 'setup_complete_flag');
+    log.info('Migration V17 applied: setup_complete_flag');
+  }
+
+  if (version < 18) {
+    migrationV18(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(18, 'deferred_receipts');
+    log.info('Migration V18 applied: deferred_receipts');
+  }
+
+  if (version < 19) {
+    migrationV19(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(19, 'vat_and_taxes_settings');
+    log.info('Migration V19 applied: vat_and_taxes_settings');
+  }
+
+  if (version < 20) {
+    migrationV20(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(20, 'product_supplier_link');
+    log.info('Migration V20 applied: product_supplier_link');
+  }
+
+  if (version < 21) {
+    migrationV21(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(21, 'seed_default_categories');
+    log.info('Migration V21 applied: seed_default_categories');
+  }
+
+  if (version < 22) {
+    migrationV22(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(22, 'recovery_key_support');
+    log.info('Migration V22 applied: recovery_key_support');
+  }
+
+  if (version < 23) {
+    migrationV23(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(23, 'add_ofd_fiscal_number');
+    log.info('Migration V23 applied: add_ofd_fiscal_number');
+  }
+
+  if (version < 24) {
+    migrationV24(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(24, 'return_basis_details');
+    log.info('Migration V24 applied: return_basis_details');
+  }
+
+  if (version < 25) {
+    migrationV25(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(25, 'parent_receipt_id');
+    log.info('Migration V25 applied: parent_receipt_id');
+  }
+
+  if (version < 26) {
+    migrationV26(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(26, 'cash_operations_ofd_url');
+    log.info('Migration V26 applied: cash_operations_ofd_url');
+  }
+
+  if (version < 27) {
+    migrationV27(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(27, 'warehouses_and_transfers');
+    log.info('Migration V27 applied: warehouses_and_transfers');
+  }
+
+  if (version < 29) {
+    migrationV29(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(29, 'fix_schema_for_multi_warehouse');
+    log.info('Migration V29 applied: fix_schema_for_multi_warehouse');
+  }
+
+  if (version < 30) {
+    migrationV30(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(30, 'cleanup_duplicate_warehouses');
+    log.info('Migration V30 applied: cleanup_duplicate_warehouses');
+  }
+
+  if (version < 31) {
+    migrationV31(db);
+    db.prepare('INSERT INTO migrations (version, name) VALUES (?, ?)').run(31, 'scale_settings_lan');
+    log.info('Migration V31 applied: scale_settings_lan');
+  }
+}
+
+function migrationV31(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(scale_settings)').all() as any[];
+    const cols = tableInfo.map((c: any) => c.name);
+    if (!cols.includes('connection_type')) {
+      db.exec("ALTER TABLE scale_settings ADD COLUMN connection_type TEXT DEFAULT 'com'");
+    }
+    if (!cols.includes('lan_ip')) {
+      db.exec("ALTER TABLE scale_settings ADD COLUMN lan_ip TEXT DEFAULT '192.168.1.100'");
+    }
+    if (!cols.includes('lan_port')) {
+      db.exec('ALTER TABLE scale_settings ADD COLUMN lan_port INTEGER DEFAULT 4196');
+    }
+    log.info('Migration V31: LAN fields added to scale_settings');
+  } catch (error) {
+    log.error('Migration V31 error:', error);
+  }
+}
+
+function migrationV22(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(companies)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'recovery_key_hash')) {
+      db.exec('ALTER TABLE companies ADD COLUMN recovery_key_hash TEXT');
+      log.info('Added recovery_key_hash column to companies table');
+    }
+  } catch (error) {
+    log.error('Migration V22 error:', error);
+  }
 }
 
 function migrationV13(db: Database.Database) {
@@ -458,12 +591,12 @@ function migrationV5(db: Database.Database) {
   const transaction = db.transaction(() => {
     // 1. Add vat_rate to products
     db.exec(`
-      ALTER TABLE products ADD COLUMN vat_rate INTEGER DEFAULT 12;
+      ALTER TABLE products ADD COLUMN vat_rate INTEGER DEFAULT 16;
     `);
 
     // 2. Add vat_rate to receipt_items for historical accuracy
     db.exec(`
-      ALTER TABLE receipt_items ADD COLUMN vat_rate INTEGER DEFAULT 12;
+      ALTER TABLE receipt_items ADD COLUMN vat_rate INTEGER DEFAULT 16;
     `);
 
     // 3. Create B2B Clients table (Counterparties)
@@ -617,4 +750,457 @@ function migrationV9(db: Database.Database) {
   });
 
   transaction();
+}
+
+function migrationV14(db: Database.Database) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS resortings (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        source_product_id TEXT NOT NULL,
+        target_product_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        source_price REAL DEFAULT 0,
+        target_price REAL DEFAULT 0,
+        price_diff REAL DEFAULT 0,
+        reason TEXT,
+        status TEXT DEFAULT 'completed',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (source_product_id) REFERENCES products(id),
+        FOREIGN KEY (target_product_id) REFERENCES products(id)
+      )
+    `);
+  } catch (error) {
+    log.error('Migration V14 error:', error);
+  }
+}
+
+function migrationV15(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(receipts)').all() as any[];
+    const hasCashGiven = tableInfo.some(col => col.name === 'cash_given');
+    if (!hasCashGiven) {
+      db.exec('ALTER TABLE receipts ADD COLUMN cash_given REAL DEFAULT 0');
+      db.exec('ALTER TABLE receipts ADD COLUMN change_amount REAL DEFAULT 0');
+    }
+  } catch (error) {
+    log.error('Migration V15 error:', error);
+  }
+}
+
+function migrationV16(db: Database.Database) {
+  try {
+    // Индексы для ускорения работы с базой при 10k+ товарах
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+      CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+      CREATE INDEX IF NOT EXISTS idx_receipts_created_at ON receipts(created_at);
+      CREATE INDEX IF NOT EXISTS idx_receipt_items_receipt_id ON receipt_items(receipt_id);
+    `);
+  } catch (error) {
+    log.error('Migration V16 error:', error);
+  }
+}
+
+function migrationV17(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(companies)').all() as any[];
+    const hasSetupComplete = tableInfo.some(col => col.name === 'is_setup_complete');
+    if (!hasSetupComplete) {
+      db.exec('ALTER TABLE companies ADD COLUMN is_setup_complete INTEGER DEFAULT 0');
+      // Для уже существующих баз (где уже есть товары/чеки/пользователи) — считаем настройку завершённой
+      const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as any;
+      if (admin) {
+        // Проверяем, менял ли админ пароль (не дефолтный admin123)
+        const user = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(admin.id) as any;
+        const bcrypt = require('bcryptjs');
+        const isDefault = bcrypt.compareSync('admin123', user.password_hash);
+        if (!isDefault) {
+          // Пароль уже сменён — настройка пройдена
+          db.exec('UPDATE companies SET is_setup_complete = 1');
+        }
+        // Если пароль дефолтный — оставляем is_setup_complete = 0, покажем экран настройки
+      }
+    }
+  } catch (error) {
+    log.error('Migration V17 error:', error);
+  }
+}
+
+function migrationV18(db: Database.Database) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS deferred_receipts (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        cart_data TEXT NOT NULL, /* JSON */
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id)
+      )
+    `);
+  } catch (error) {
+    log.error('Migration V18 error:', error);
+  }
+}
+
+function migrationV19(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(settings)').all() as any[];
+    const hasVat = tableInfo.some(col => col.name === 'is_vat_payer');
+    if (!hasVat) {
+      db.exec('ALTER TABLE settings ADD COLUMN is_vat_payer INTEGER DEFAULT 0');
+      db.exec('ALTER TABLE settings ADD COLUMN vat_certificate_series TEXT');
+      db.exec('ALTER TABLE settings ADD COLUMN vat_certificate_number TEXT');
+      db.exec('ALTER TABLE settings ADD COLUMN vat_registered_at TEXT');
+      db.exec('ALTER TABLE settings ADD COLUMN vat_certificate_issued_at TEXT');
+      db.exec("ALTER TABLE settings ADD COLUMN tax_regime TEXT DEFAULT 'СНР'");
+      db.exec('ALTER TABLE settings ADD COLUMN is_kpn_payer INTEGER DEFAULT 0');
+      db.exec('ALTER TABLE settings ADD COLUMN is_excise_payer INTEGER DEFAULT 0');
+      db.exec('ALTER TABLE settings ADD COLUMN accounting_policy_start_date TEXT');
+
+      // Add vat_rate to products
+      const prodInfo = db.prepare('PRAGMA table_info(products)').all() as any[];
+      if (!prodInfo.some(col => col.name === 'vat_rate')) {
+        db.exec('ALTER TABLE products ADD COLUMN vat_rate INTEGER DEFAULT 0');
+      }
+    }
+  } catch (error) {
+    log.error('Migration V19 error:', error);
+  }
+}
+
+function migrationV20(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(products)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'supplier_id')) {
+      db.exec('ALTER TABLE products ADD COLUMN supplier_id TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_id)');
+    }
+  } catch (error) {
+    log.error('Migration V20 error:', error);
+  }
+}
+function migrationV21(db: Database.Database) {
+  try {
+    const companies = db.prepare('SELECT id FROM companies').all() as { id: string }[];
+    const defaultCategories = [
+      'Молочные продукты', 'Мясные изделия', 'Морепродукты', 'Булочные изделия',
+      'Фрукты и овощи', 'Напитки', 'Кондитерские изделия', 'Техника', 'Ткани и текстиль', 'Хозтовары'
+    ];
+
+    const checkStmt = db.prepare('SELECT COUNT(*) as count FROM categories WHERE company_id = ?');
+    const insertStmt = db.prepare('INSERT INTO categories (id, company_id, name) VALUES (?, ?, ?)');
+
+    for (const company of companies) {
+      const { count } = checkStmt.get(company.id) as { count: number };
+      if (count === 0) {
+        for (const cat of defaultCategories) {
+          insertStmt.run(uuidv4(), company.id, cat);
+        }
+        log.info(`Seeded ${defaultCategories.length} categories for company ${company.id}`);
+      }
+    }
+  } catch (error) {
+    log.error('Migration V21 error:', error);
+  }
+}
+
+function migrationV23(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(receipts)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'ofd_fiscal_number')) {
+      db.exec('ALTER TABLE receipts ADD COLUMN ofd_fiscal_number TEXT');
+      log.info('Added ofd_fiscal_number column to receipts table');
+    }
+  } catch (error) {
+    log.error('Migration V23 error:', error);
+  }
+}
+
+function migrationV24(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(receipts)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'ofd_datetime')) {
+      db.exec('ALTER TABLE receipts ADD COLUMN ofd_datetime TEXT');
+      log.info('Added ofd_datetime column to receipts table');
+    }
+    if (!tableInfo.some(col => col.name === 'ofd_registration_number')) {
+      db.exec('ALTER TABLE receipts ADD COLUMN ofd_registration_number TEXT');
+      log.info('Added ofd_registration_number column to receipts table');
+    }
+  } catch (error) {
+    log.error('Migration V24 error:', error);
+  }
+}
+
+function migrationV25(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(receipts)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'parent_receipt_id')) {
+      db.exec('ALTER TABLE receipts ADD COLUMN parent_receipt_id TEXT');
+      log.info('Added parent_receipt_id column to receipts table');
+    }
+  } catch (error) {
+    log.error('Migration V25 error:', error);
+  }
+}
+
+function migrationV26(db: Database.Database) {
+  try {
+    const tableInfo = db.prepare('PRAGMA table_info(cash_operations)').all() as any[];
+    if (!tableInfo.some(col => col.name === 'ofd_ticket_url')) {
+      db.exec('ALTER TABLE cash_operations ADD COLUMN ofd_ticket_url TEXT');
+      log.info('Added ofd_ticket_url column to cash_operations table');
+    }
+  } catch (error) {
+    log.error('Migration V26 error:', error);
+  }
+}
+
+function migrationV27(db: Database.Database) {
+  const transaction = db.transaction(() => {
+    // 1. Create warehouses table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        is_main INTEGER DEFAULT 0,
+        address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id)
+      )
+    `);
+
+    // 2. Create transfers table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS transfers (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        doc_number TEXT NOT NULL,
+        date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        from_warehouse_id TEXT NOT NULL,
+        to_warehouse_id TEXT NOT NULL,
+        status TEXT DEFAULT 'draft', /* draft, completed, cancelled */
+        created_by TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id),
+        FOREIGN KEY (from_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (to_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `);
+
+    // 3. Create transfer_items table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS transfer_items (
+        id TEXT PRIMARY KEY,
+        transfer_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        FOREIGN KEY (transfer_id) REFERENCES transfers(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+
+    // 4. Create Main Warehouse for all existing companies if not exists
+    const companies = db.prepare('SELECT id FROM companies').all() as { id: string }[];
+    for (const company of companies) {
+      const existing = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(company.id);
+      if (!existing) {
+        const warehouseId = uuidv4();
+        db.prepare(`
+          INSERT INTO warehouses (id, company_id, name, is_main)
+          VALUES (?, ?, 'Основной склад', 1)
+        `).run(warehouseId, company.id);
+      }
+    }
+
+    // 5. Migrate inventory table to include warehouse_id
+    const inventoryInfo = db.prepare('PRAGMA table_info(inventory)').all() as any[];
+    const hasWarehouseId = inventoryInfo.some(col => col.name === 'warehouse_id');
+
+    if (!hasWarehouseId) {
+      db.exec(`
+        CREATE TABLE inventory_new(
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          warehouse_id TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          quantity REAL DEFAULT 0,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(company_id) REFERENCES companies(id),
+          FOREIGN KEY(warehouse_id) REFERENCES warehouses(id),
+          FOREIGN KEY(product_id) REFERENCES products(id),
+          UNIQUE(company_id, warehouse_id, product_id)
+        )
+          `);
+
+      db.exec(`
+        INSERT INTO inventory_new(id, company_id, warehouse_id, product_id, quantity, updated_at)
+        SELECT 
+          i.id,
+          i.company_id,
+          (SELECT id FROM warehouses WHERE company_id = i.company_id AND is_main = 1 LIMIT 1),
+          i.product_id,
+          i.quantity,
+          i.updated_at
+        FROM inventory i
+      `);
+
+      db.exec(`DROP TABLE inventory`);
+      db.exec(`ALTER TABLE inventory_new RENAME TO inventory`);
+    }
+  });
+
+  try {
+    transaction();
+    log.info('Migration V27 successfully executed (Warehouses & Transfers)');
+  } catch (err) {
+    log.error('Migration V27 failed:', err);
+    throw err;
+  }
+}
+
+function migrationV29(db: Database.Database) {
+  const transaction = db.transaction(() => {
+    // 1. Ensure warehouses has is_main and address columns
+    const warehouseInfo = db.prepare('PRAGMA table_info(warehouses)').all() as any[];
+    if (!warehouseInfo.some(col => col.name === 'is_main')) {
+      db.exec('ALTER TABLE warehouses ADD COLUMN is_main INTEGER DEFAULT 0');
+    }
+    if (!warehouseInfo.some(col => col.name === 'address')) {
+      db.exec('ALTER TABLE warehouses ADD COLUMN address TEXT');
+    }
+
+    // 2. Ensure each company has a main warehouse
+    const companies = db.prepare('SELECT id FROM companies').all() as { id: string }[];
+    for (const company of companies) {
+      const existing = db.prepare('SELECT id FROM warehouses WHERE company_id = ? AND is_main = 1').get(company.id);
+      if (!existing) {
+        const warehouseId = uuidv4();
+        db.prepare(`
+          INSERT INTO warehouses (id, company_id, name, is_main)
+          VALUES (?, ?, 'Основной склад', 1)
+        `).run(warehouseId, company.id);
+      }
+    }
+
+    // 3. Ensure inventory has warehouse_id
+    const inventoryInfo = db.prepare('PRAGMA table_info(inventory)').all() as any[];
+    const hasWarehouseId = inventoryInfo.some(col => col.name === 'warehouse_id');
+    if (!hasWarehouseId) {
+      db.exec(`
+        CREATE TABLE inventory_new(
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          warehouse_id TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          quantity REAL DEFAULT 0,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(company_id) REFERENCES companies(id),
+          FOREIGN KEY(warehouse_id) REFERENCES warehouses(id),
+          FOREIGN KEY(product_id) REFERENCES products(id),
+          UNIQUE(company_id, warehouse_id, product_id)
+        )
+      `);
+
+      db.exec(`
+        INSERT INTO inventory_new(id, company_id, warehouse_id, product_id, quantity, updated_at)
+        SELECT 
+          i.id,
+          i.company_id,
+          (SELECT id FROM warehouses WHERE company_id = i.company_id AND is_main = 1 LIMIT 1),
+          i.product_id,
+          i.quantity,
+          i.updated_at
+        FROM inventory i
+      `);
+
+      db.exec(`DROP TABLE inventory`);
+      db.exec(`ALTER TABLE inventory_new RENAME TO inventory`);
+    }
+
+    // 4. Fix transfers table
+    db.exec('DROP TABLE IF EXISTS transfer_items');
+    db.exec('DROP TABLE IF EXISTS transfers');
+
+    db.exec(`
+      CREATE TABLE transfers (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        doc_number TEXT NOT NULL,
+        date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        from_warehouse_id TEXT NOT NULL,
+        to_warehouse_id TEXT NOT NULL,
+        status TEXT DEFAULT 'draft',
+        created_by TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id),
+        FOREIGN KEY (from_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (to_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )
+    `);
+
+    db.exec(`
+      CREATE TABLE transfer_items (
+        id TEXT PRIMARY KEY,
+        transfer_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        FOREIGN KEY (transfer_id) REFERENCES transfers(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      )
+    `);
+  });
+
+  try {
+    transaction();
+    log.info('Migration V29 successfully executed (Fix schema multi warehouse)');
+  } catch (err) {
+    log.error('Migration V29 failed:', err);
+    throw err;
+  }
+}
+
+function migrationV30(db: Database.Database) {
+  const transaction = db.transaction(() => {
+    const companies = db.prepare('SELECT id FROM companies').all() as { id: string }[];
+    for (const company of companies) {
+      const mainWarehouses = db.prepare("SELECT id FROM warehouses WHERE company_id = ? AND name = 'Основной склад' ORDER BY created_at ASC").all(company.id) as { id: string }[];
+
+      if (mainWarehouses.length > 1) {
+        const primaryId = mainWarehouses[0].id;
+        for (let i = 1; i < mainWarehouses.length; i++) {
+          const duplicateId = mainWarehouses[i].id;
+
+          // Reassign inventory from duplicate to primary
+          db.prepare('UPDATE OR IGNORE inventory SET warehouse_id = ? WHERE warehouse_id = ?').run(primaryId, duplicateId);
+          // Delete any conflicting leftover inventory rows for the duplicate
+          db.prepare('DELETE FROM inventory WHERE warehouse_id = ?').run(duplicateId);
+
+          // Reassign transfers
+          db.prepare('UPDATE transfers SET from_warehouse_id = ? WHERE from_warehouse_id = ?').run(primaryId, duplicateId);
+          db.prepare('UPDATE transfers SET to_warehouse_id = ? WHERE to_warehouse_id = ?').run(primaryId, duplicateId);
+
+          // Delete duplicate warehouse
+          db.prepare('DELETE FROM warehouses WHERE id = ?').run(duplicateId);
+        }
+      }
+    }
+  });
+
+  try {
+    transaction();
+    log.info('Migration V30 successfully executed (Cleanup duplicate main warehouses)');
+  } catch (err) {
+    log.error('Migration V30 failed:', err);
+    throw err;
+  }
 }

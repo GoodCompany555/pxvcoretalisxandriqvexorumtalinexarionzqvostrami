@@ -8,8 +8,10 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Input } from '../components/ui/input';
 import { PrintableReceipt } from '../components/PrintableReceipt';
 import { useReactToPrint } from 'react-to-print';
+import { useTranslation } from 'react-i18next';
 
 export default function Returns() {
+  const { t } = useTranslation();
   const { company, user } = useAuthStore();
   const { currentShift, setCurrentShift } = useShiftStore();
   const [searchReceiptNumber, setSearchReceiptNumber] = useState('');
@@ -25,7 +27,7 @@ export default function Returns() {
 
   const performPrint = useReactToPrint({
     contentRef: receiptPrintRef,
-    documentTitle: 'Чек возврата',
+    documentTitle: t('returns.receiptTitle', 'Чек возврата'),
     onAfterPrint: () => setCompletedReceiptData(null)
   });
 
@@ -47,7 +49,7 @@ export default function Returns() {
 
   const handleReprint = async (receiptId: string) => {
     if (!company?.id) return;
-    const loader = toast.loading('Печать чека возврата...');
+    const loader = toast.loading(t('returns.printLoading', 'Печать чека возврата...'));
     try {
       if ((window as any).electronAPI?.resetPrinter) {
         await (window as any).electronAPI.resetPrinter();
@@ -55,7 +57,7 @@ export default function Returns() {
 
       const res = await window.electronAPI.pos.reprintReceipt(company.id, receiptId);
       if (res.success && res.data) {
-        toast.success(`Готово`, { id: loader });
+        toast.success(t('common.ready', 'Готово'), { id: loader });
         setCompletedReceiptData({
           companyName: company.name,
           companyBin: company.bin,
@@ -63,7 +65,7 @@ export default function Returns() {
           cashierName: res.data.cashier_name,
           receiptNumber: res.data.receipt_number,
           items: (res.data.items || []).map((i: any) => ({
-            name: i.name || 'Товар',
+            name: i.name || t('inventory.product', 'Товар'),
             name_kk: i.name_kk || '',
             quantity: i.quantity,
             price: i.price,
@@ -79,15 +81,15 @@ export default function Returns() {
           type: res.data.type
         });
       } else {
-        toast.error(res.error || 'Ошибка загрузки данных чека', { id: loader });
+        toast.error(res.error || t('returns.dataLoadError', 'Ошибка загрузки данных чека'), { id: loader });
       }
-    } catch { toast.error('Ошибка печати чека', { id: loader }); }
+    } catch { toast.error(t('returns.printError', 'Ошибка печати чека'), { id: loader }); }
   };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!company?.id) return;
-    if (!searchReceiptNumber) return toast.error('Введите номер чека');
+    if (!searchReceiptNumber) return toast.error(t('returns.enterReceiptNum', 'Введите номер чека'));
 
     setLoading(true);
     try {
@@ -101,11 +103,11 @@ export default function Returns() {
         });
         setReturnQuantities(initialQtys);
       } else {
-        toast.error(res.error || 'Чек не найден');
+        toast.error(res.error || t('returns.notFound', 'Чек не найден'));
         setReceipt(null);
       }
     } catch (error) {
-      toast.error('Ошибка поиска');
+      toast.error(t('returns.searchError', 'Ошибка поиска'));
     } finally {
       setLoading(false);
     }
@@ -115,7 +117,7 @@ export default function Returns() {
     const qty = parseFloat(newValue) || 0;
     if (qty < 0) return;
     if (qty > maxQty) {
-      toast.error(`Максимальное количество для возврата: ${maxQty}`);
+      toast.error(`${t('returns.maxQuantityError', 'Максимальное количество для возврата:')} ${maxQty}`);
       return;
     }
     setReturnQuantities({ ...returnQuantities, [itemId]: qty });
@@ -156,7 +158,7 @@ export default function Returns() {
       });
 
     if (itemsToReturn.length === 0) {
-      return toast.error('Укажите количество для возврата хотя бы для одного товара');
+      return toast.error(t('returns.selectOneItemError', 'Укажите количество для возврата хотя бы для одного товара'));
     }
 
     setConfirmDialog(true);
@@ -177,21 +179,19 @@ export default function Returns() {
         return {
           id: item.product_id,
           product_name: item.product_name,
+          name_kk: item.name_kk, // Передаем казахское название
           quantity: qtyToReturn,
           price: unitBasePrice,
           discount: unitDiscount * qtyToReturn,
           total: unitPriceWithDiscount * qtyToReturn,
-          mark_code: item.mark_code
+          mark_code: item.mark_code,
+          vat_rate: item.vat_rate // Передаем НДС
         };
       });
 
     const returnTotal = calculateTotalReturn();
+    // ... остальной код расчета returnCash/returnCard остается прежним
 
-    // Определяем как возвращать деньги.
-    // Если оригинальный чек был оплачен картой - возврат на карту.
-    // Если налом - из кассы.
-    // Если смешанный - возвращаем в той же пропорции (упрощенно: сначала нал, потом карту, или дать выбрать).
-    // Для простоты: если только нал - нал. Если только карта - карта.
     let returnCash = 0;
     let returnCard = 0;
     if (receipt.payment_type === 'cash') {
@@ -199,7 +199,6 @@ export default function Returns() {
     } else if (receipt.payment_type === 'card') {
       returnCard = returnTotal;
     } else {
-      // Для смешанной оплаты пока для простоты возвращаем наличными, если не превышает изначальный нал
       if (returnTotal <= receipt.cash_amount) {
         returnCash = returnTotal;
       } else {
@@ -208,15 +207,15 @@ export default function Returns() {
       }
     }
 
-    const loader = toast.loading('Проведение возврата...');
+    const loader = toast.loading(t('returns.processingReturn', 'Проведение возврата...'));
     try {
       if (!currentShift?.id) {
-        toast.error('Нет открытой смены. Откройте смену для проведения возврата.', { id: loader });
+        toast.error(t('reports.shiftMustOpen', 'Нет открытой смены. Откройте смену для проведения возврата.'), { id: loader });
         return;
       }
 
       if (returnCash > currentShift.end_cash) {
-        toast.error(`В кассе недостаточно наличных для возврата. В кассе: ${currentShift.end_cash} ₸`, { id: loader });
+        toast.error(`${t('returns.notEnoughCashError', 'В кассе недостаточно наличных для возврата. В кассе:')} ${currentShift.end_cash} ₸`, { id: loader });
         return;
       }
 
@@ -232,17 +231,21 @@ export default function Returns() {
       });
 
       if (res.success) {
-        toast.success(`Возврат проведен успешно! Чек №${res.data?.receiptId?.split('-')[0]}`, { id: loader });
+        toast.success(`${t('returns.successProcessed', 'Возврат проведен успешно! Чек №')}${res.data?.receiptId?.split('-')[0]}`, { id: loader });
         setReceipt(null);
         setSearchReceiptNumber('');
-        if (res.data?.receiptId) {
+
+        // Оптимизация: используем данные из ответа МГНОВЕННО
+        if (res.data?.printData) {
+          setCompletedReceiptData(res.data.printData);
+        } else if (res.data?.receiptId) {
           handleReprint(res.data.receiptId);
         }
       } else {
-        toast.error(res.error || 'Ошибка проведения возврата', { id: loader });
+        toast.error(res.error || t('returns.processError', 'Ошибка проведения возврата'), { id: loader });
       }
     } catch (e) {
-      toast.error('Ошибка', { id: loader });
+      toast.error(t('common.error', 'Ошибка'), { id: loader });
     }
   };
 
@@ -253,9 +256,9 @@ export default function Returns() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-3">
             <Undo2 className="w-8 h-8 text-primary" />
-            Возврат товара
+            {t('returns.title', 'Возврат товара')}
           </h1>
-          <p className="text-gray-500 mt-1">Оформление частичного или полного возврата по чеку</p>
+          <p className="text-gray-500 mt-1">{t('returns.subtitle', 'Оформление частичного или полного возврата по чеку')}</p>
         </div>
       </div>
 
@@ -266,17 +269,18 @@ export default function Returns() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
               <Search className="w-5 h-5 text-gray-400" />
-              Поиск чека
+              {t('returns.searchTitle', 'Поиск чека')}
             </h2>
             <form onSubmit={handleSearch} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Номер чека</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('returns.receiptNumberLabel', 'Номер чека')}</label>
                 <Input
                   type="number"
                   value={searchReceiptNumber}
-                  onChange={e => setSearchReceiptNumber(e.target.value)}
+                  onChange={e => setSearchReceiptNumber(e.target.value.substring(0, 10))}
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                  placeholder="Например: 124"
+                  placeholder={t('returns.receiptPlaceholder', 'Например: 124')}
+                  maxLength={10}
                   autoFocus
                 />
               </div>
@@ -285,7 +289,7 @@ export default function Returns() {
                 disabled={loading}
                 className="w-full bg-primary hover:bg-primary/90 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-70"
               >
-                {loading ? 'Поиск...' : 'Найти чек'}
+                {loading ? t('common.loading', 'Поиск...') : t('returns.searchBtn', 'Найти чек')}
               </button>
             </form>
           </div>
@@ -295,32 +299,32 @@ export default function Returns() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex-1">
               <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-gray-400" />
-                Информация о чеке
+                {t('returns.receiptInfoTitle', 'Информация о чеке')}
               </h2>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between py-1 border-b border-gray-50">
-                  <span className="text-gray-500">Дата и время</span>
+                  <span className="text-gray-500">{t('reports.date', 'Дата и время')}</span>
                   <span className="font-medium">{new Date(receipt.created_at).toLocaleString('ru-RU')}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-gray-50">
-                  <span className="text-gray-500">Кассир</span>
+                  <span className="text-gray-500">{t('reports.cashier', 'Кассир')}</span>
                   <span className="font-medium">{receipt.cashier_name}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-gray-50">
-                  <span className="text-gray-500">Тип оплаты</span>
+                  <span className="text-gray-500">{t('returns.paymentTypeLabel', 'Тип оплаты')}</span>
                   <span className="font-medium">
-                    {receipt.payment_type === 'cash' ? 'Наличные' : receipt.payment_type === 'card' ? 'Карта' : 'Смешанная'}
+                    {receipt.payment_type === 'cash' ? t('pos.cash', 'Наличные') : receipt.payment_type === 'card' ? t('pos.card', 'Карта') : t('returns.mixedPayment', 'Смешанная')}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-gray-50">
-                  <span className="text-gray-500">Сумма чека</span>
+                  <span className="text-gray-500">{t('returns.receiptAmountLabel', 'Сумма чека')}</span>
                   <span className="font-bold text-lg">{receipt.total_amount.toLocaleString('ru')} ₸</span>
                 </div>
               </div>
 
               <div className="mt-6 bg-blue-50 text-blue-800 p-4 rounded-lg flex gap-3 text-sm">
                 <AlertCircle className="w-5 h-5 shrink-0" />
-                <p>Укажите количество возвращаемых товаров в таблице справа. Сумма к возврату рассчитается автоматически.</p>
+                <p>{t('returns.returnHint', 'Укажите количество возвращаемых товаров в таблице справа. Сумма к возврату рассчитается автоматически.')}</p>
               </div>
             </div>
           )}
@@ -331,17 +335,17 @@ export default function Returns() {
           {receipt ? (
             <>
               <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                <h2 className="text-lg font-bold">Товары в чеке №{receipt.receipt_number}</h2>
+                <h2 className="text-lg font-bold">{t('returns.itemsInReceipt', 'Товары в чеке №')}{receipt.receipt_number}</h2>
               </div>
               <div className="flex-1 overflow-auto">
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-white sticky top-0 z-10 border-b border-gray-100 text-xs uppercase text-gray-500">
                     <tr>
-                      <th className="px-6 py-4">Товар</th>
-                      <th className="px-6 py-4 text-center">Куплено</th>
-                      <th className="px-6 py-4 text-right">Цена со скидкой</th>
-                      <th className="px-6 py-4 text-right">Итого позиция</th>
-                      <th className="px-6 py-4 text-center bg-blue-50/50">Вернуть (кол-во)</th>
+                      <th className="px-6 py-4">{t('inventory.product', 'Товар')}</th>
+                      <th className="px-6 py-4 text-center">{t('returns.purchasedCol', 'Куплено')}</th>
+                      <th className="px-6 py-4 text-right">{t('returns.priceWithDiscountCol', 'Цена со скидкой')}</th>
+                      <th className="px-6 py-4 text-right">{t('returns.totalItemCol', 'Итого позиция')}</th>
+                      <th className="px-6 py-4 text-center bg-blue-50/50">{t('returns.returnQtyCol', 'Вернуть (кол-во)')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -358,6 +362,9 @@ export default function Returns() {
                           </td>
                           <td className="px-6 py-4 text-center font-medium text-gray-700">
                             {item.quantity}
+                            {item.returned_qty > 0 && (
+                              <div className="text-xs text-orange-500 mt-0.5">Возвращено: {item.returned_qty}</div>
+                            )}
                           </td>
                           <td className="px-6 py-4 text-right text-sm text-gray-600">
                             {unitPriceWithDiscount.toLocaleString('ru')} ₸
@@ -370,12 +377,13 @@ export default function Returns() {
                               <Input
                                 type="number"
                                 min="0"
-                                max={item.quantity}
+                                max={item.available_qty}
                                 step="any"
                                 value={qtyToReturn === 0 ? '' : qtyToReturn}
-                                onChange={e => handleQuantityChange(item.id, item.quantity, e.target.value)}
+                                onChange={e => handleQuantityChange(item.id, item.available_qty, e.target.value)}
                                 placeholder="0"
-                                className="w-24 px-3 py-1.5 border border-blue-200 rounded text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-700 bg-white"
+                                disabled={item.available_qty <= 0}
+                                className={`w-24 px-3 py-1.5 border border-blue-200 rounded text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-bold text-blue-700 bg-white ${item.available_qty <= 0 ? 'opacity-50 bg-gray-100 cursor-not-allowed' : ''}`}
                               />
                             </div>
                           </td>
@@ -389,7 +397,7 @@ export default function Returns() {
               {/* Футер с итогом возврата */}
               <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
                 <div>
-                  <div className="text-sm text-gray-500">Сумма к возврату:</div>
+                  <div className="text-sm text-gray-500">{t('returns.returnTotalLabel', 'Сумма к возврату:')}</div>
                   <div className="text-3xl font-black text-red-600">
                     {calculateTotalReturn().toLocaleString('ru')} ₸
                   </div>
@@ -400,15 +408,15 @@ export default function Returns() {
                   className="bg-red-500 hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-sm shadow-red-500/20"
                 >
                   <CheckCircle className="w-5 h-5" />
-                  Провести возврат
+                  {t('returns.processReturnBtn', 'Провести возврат')}
                 </button>
               </div>
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
               <Receipt className="w-16 h-16 mb-4 text-gray-200" />
-              <p className="text-lg font-medium text-gray-500">Найдите чек для начала оформления возврата</p>
-              <p className="text-sm mt-2">Введите номер чека в панели слева</p>
+              <p className="text-lg font-medium text-gray-500">{t('returns.findReceiptHint', 'Найдите чек для начала оформления возврата')}</p>
+              <p className="text-sm mt-2">{t('returns.enterReceiptHint', 'Введите номер чека в панели слева')}</p>
             </div>
           )}
         </div>
@@ -416,12 +424,12 @@ export default function Returns() {
 
       <ConfirmDialog
         isOpen={confirmDialog}
-        title="Провести возврат?"
-        message={`Провести возврат на сумму ${calculateTotalReturn().toLocaleString('ru')} ₸?`}
+        title={t('returns.confirmTitle', 'Провести возврат?')}
+        message={t('returns.confirmMessage', 'Провести возврат на сумму {{amount}} ₸?').replace('{{amount}}', calculateTotalReturn().toLocaleString('ru'))}
         onConfirm={handleConfirmProcessReturn}
         onCancel={() => setConfirmDialog(false)}
         danger={true}
-        confirmText="Оформить"
+        confirmText={t('returns.confirmBtn', 'Оформить')}
       />
 
       {/* Скрытый чек для печати */}

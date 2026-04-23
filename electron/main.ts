@@ -4,8 +4,48 @@ import * as dotenv from 'dotenv'
 import * as fs from 'fs'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
+import { machineIdSync } from 'node-machine-id'
+import crypto from 'crypto'
 
-export const store = new Store()
+// Генерируем надежный ключ из ID железа
+const hwid = machineIdSync()
+const SECURE_KEY = crypto.createHash('sha256').update(String(hwid) + '_easykassa_v1').digest('base64').substring(0, 32)
+const IV_LENGTH = 16
+
+export const store = new Store({
+  encryptionKey: SECURE_KEY
+})
+
+export function encryptData(text: string): string {
+  if (!text) return text
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH)
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(SECURE_KEY, 'utf-8'), iv)
+    let encrypted = cipher.update(text)
+    encrypted = Buffer.concat([encrypted, cipher.final()])
+    return iv.toString('hex') + ':' + encrypted.toString('hex')
+  } catch (e) {
+    return text
+  }
+}
+
+export function decryptData(text: string): string {
+  if (!text) return text
+  if (!text.includes(':')) return text // Совместимость со старыми открытыми данными
+  try {
+    const textParts = text.split(':')
+    const iv = Buffer.from(textParts.shift()!, 'hex')
+    const encryptedText = Buffer.from(textParts.join(':'), 'hex')
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(SECURE_KEY, 'utf-8'), iv)
+    let decrypted = decipher.update(encryptedText)
+    decrypted = Buffer.concat([decrypted, decipher.final()])
+    return decrypted.toString()
+  } catch (e) {
+    console.error('Decryption failed, returning empty');
+    return '' // fail safe
+  }
+}
 
 // Загружаем .env файл с API ключами
 const envPath = path.join(process.cwd(), '.env')
@@ -27,8 +67,11 @@ import { setupTerminalsHandlers } from './api/terminals'
 import { setupScalesHandlers } from './api/scales'
 import { setupReportsHandlers } from './api/reports'
 import { setupRevisionsHandlers } from './api/revisions'
+import { setupResortingsHandlers } from './api/resortings'
 import { setupNktHandlers } from './api/nkt'
 import { setupBackupHandlers } from './api/backup'
+import { setupWarehousesHandlers } from './api/warehouses'
+import { setupTransfersHandlers } from './api/transfers'
 import { startAutoBackupScheduler } from './api/backup'
 import { setupNetworkHandlers, restoreNetworkMode } from './api/network'
 import { startOfflineQueueProcessor, stopOfflineQueueProcessor } from './services/offlineQueue'
@@ -38,6 +81,28 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 export let mainWindow: BrowserWindow | null = null;
 let customerDisplay: BrowserWindow | null = null;
+
+// Функции безопасности
+function applySecurityRestrictions(webContents: Electron.WebContents) {
+  // Блокируем контекстное меню и инструменты разработчика
+  webContents.on('context-menu', (e) => {
+    if (app.isPackaged) e.preventDefault();
+  });
+
+  // Блокируем шорткаты DevTools (Ctrl+Shift+I, F12 и т.д.)
+  webContents.on('before-input-event', (event, input) => {
+    if (app.isPackaged) {
+      if (
+        (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+        (input.control && input.shift && input.key.toLowerCase() === 'j') ||
+        (input.control && input.shift && input.key.toLowerCase() === 'c') ||
+        input.key === 'F12'
+      ) {
+        event.preventDefault();
+      }
+    }
+  });
+}
 
 function createWindow() {
   // Иконка окна и ярлыка
@@ -94,10 +159,21 @@ function createWindow() {
     mainWindow?.webContents.focus()
   })
 
-  // Обработчик before-input-event помогает держать фокус на webContents
-  mainWindow.webContents.on('before-input-event', (_event, _input) => {
-    // просто наличие этого обработчика держит фокус
-  })
+  // Перехватываем открытие новых окон (например, ссылок target="_blank" на чеки Webkassa)
+  // и устанавливаем наш логотип вместо стандартного логотипа Electron
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        icon: iconPath,
+        autoHideMenuBar: true
+      }
+    };
+  });
+
+  // Применяем блокировки безопасности DevTools и шорткатов
+  applySecurityRestrictions(mainWindow.webContents)
+
 
   mainWindow.setAlwaysOnTop(false)
 
@@ -136,11 +212,15 @@ app.whenReady().then(() => {
   setupScalesHandlers()
   setupReportsHandlers()
   setupRevisionsHandlers()
+  setupResortingsHandlers()
   setupNktHandlers()
   setupBackupHandlers()
+  setupWarehousesHandlers()
+  setupTransfersHandlers()
   setupNetworkHandlers()
   startAutoBackupScheduler()
   restoreNetworkMode()
+  startOfflineQueueProcessor()
 
   // ───── Автообновление ─────
   setupAutoUpdater()
@@ -448,6 +528,10 @@ function createCustomerDisplay() {
     customerDisplay.showInactive()
   })
 
+  // Применяем блокировки безопасности DevTools и шорткатов
+  applySecurityRestrictions(customerDisplay.webContents)
+
+
   customerDisplay.on('closed', () => {
     customerDisplay = null
   })
@@ -469,6 +553,12 @@ ipcMain.handle('customer-display:setMode', (_event, mode: string, data: any) => 
 // ═══════════════════════════════════════════════════════════════
 
 function setupAutoUpdater() {
+  // Настраиваем логирование
+  autoUpdater.logger = log
+  // @ts-ignore
+  autoUpdater.logger.transports.file.level = 'debug'
+  log.info('[AutoUpdater] Приложение запускается...')
+
   // Не проверяем обновления в dev-режиме
   if (!app.isPackaged) {
     console.log('[AutoUpdater] Пропуск — приложение запущено в dev-режиме')
@@ -560,12 +650,12 @@ function setupAutoUpdater() {
 
   // ───── Автоматическая проверка ─────
 
-  // Первая проверка через 30 секунд после запуска (не мешаем загрузке)
+  // Первая проверка через 2 секунды после запуска
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('[AutoUpdater] Ошибка первой проверки:', err.message)
     })
-  }, 30_000)
+  }, 2_000)
 
   // Повторная проверка каждые 4 часа
   setInterval(() => {

@@ -1,15 +1,23 @@
 import { registerRpc } from '../services/rpc';
-import { ipcMain } from 'electron';
 import { mainWindow } from '../main';
 import { db } from '../database';
 import log from 'electron-log';
 import { v4 as uuidv4 } from 'uuid';
-import { testScales, startWeightStream, ScaleConfig } from '../services/scales';
+import {
+  testScales,
+  startWeightStream,
+  diagnoseScales,
+  getScaleConnected,
+  ScaleConfig
+} from '../services/scales';
 
 let activeStream: { stop: () => void } | null = null;
+let currentWeight = 0;
+let currentStable = false;
 
 export function setupScalesHandlers() {
-  // Получить настройки весов
+
+  // ─── Получить настройки весов ─────────────────────────────────────────
   registerRpc('scales:get-settings', async (_event, companyId: string) => {
     try {
       if (!db) throw new Error('Database not initialized');
@@ -21,7 +29,7 @@ export function setupScalesHandlers() {
     }
   });
 
-  // Сохранить настройки весов
+  // ─── Сохранить настройки весов ────────────────────────────────────────
   registerRpc('scales:save-settings', async (_event, data: any) => {
     try {
       if (!db) throw new Error('Database not initialized');
@@ -29,14 +37,36 @@ export function setupScalesHandlers() {
 
       if (existing) {
         db.prepare(`
-          UPDATE scale_settings SET com_port = ?, baud_rate = ?, protocol = ?, is_active = ?
+          UPDATE scale_settings 
+          SET com_port = ?, baud_rate = ?, protocol = ?, is_active = ?,
+              connection_type = ?, lan_ip = ?, lan_port = ?
           WHERE company_id = ?
-        `).run(data.comPort, data.baudRate || 9600, data.protocol || 'cas', data.isActive ? 1 : 0, data.companyId);
+        `).run(
+          data.comPort,
+          data.baudRate || 9600,
+          data.protocol || 'cas',
+          data.isActive ? 1 : 0,
+          data.connectionType || 'com',
+          data.lanIp || '192.168.1.100',
+          data.lanPort || 4196,
+          data.companyId
+        );
       } else {
         db.prepare(`
-          INSERT INTO scale_settings (id, company_id, com_port, baud_rate, protocol, is_active)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(uuidv4(), data.companyId, data.comPort, data.baudRate || 9600, data.protocol || 'cas', data.isActive ? 1 : 0);
+          INSERT INTO scale_settings 
+            (id, company_id, com_port, baud_rate, protocol, is_active, connection_type, lan_ip, lan_port)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          uuidv4(),
+          data.companyId,
+          data.comPort,
+          data.baudRate || 9600,
+          data.protocol || 'cas',
+          data.isActive ? 1 : 0,
+          data.connectionType || 'com',
+          data.lanIp || '192.168.1.100',
+          data.lanPort || 4196
+        );
       }
 
       return { success: true };
@@ -46,7 +76,7 @@ export function setupScalesHandlers() {
     }
   });
 
-  // Тест подключения весов
+  // ─── Тест подключения ─────────────────────────────────────────────────
   registerRpc('scales:test', async (_event, companyId: string) => {
     try {
       if (!db) throw new Error('Database not initialized');
@@ -54,9 +84,12 @@ export function setupScalesHandlers() {
       if (!settings) return { success: false, error: 'Весы не настроены' };
 
       const config: ScaleConfig = {
+        connection_type: settings.connection_type || 'com',
         com_port: settings.com_port,
         baud_rate: settings.baud_rate,
-        protocol: settings.protocol,
+        protocol: settings.protocol || 'cas',
+        lan_ip: settings.lan_ip || '192.168.1.100',
+        lan_port: settings.lan_port || 4196,
       };
 
       const ok = await testScales(config);
@@ -67,7 +100,43 @@ export function setupScalesHandlers() {
     }
   });
 
-  // Начать стриминг веса (отправляет данные через IPC events)
+  // ─── Диагностика — возвращает сырые данные 10 сек ───────────────────
+  registerRpc('scales:diagnose', async (_event, companyId: string) => {
+    try {
+      if (!db) throw new Error('Database not initialized');
+      const settings = db.prepare(`SELECT * FROM scale_settings WHERE company_id = ?`).get(companyId) as any;
+      if (!settings) return { success: false, error: 'Весы не настроены' };
+
+      const config: ScaleConfig = {
+        connection_type: settings.connection_type || 'com',
+        com_port: settings.com_port,
+        baud_rate: settings.baud_rate,
+        protocol: settings.protocol || 'cas',
+        lan_ip: settings.lan_ip || '192.168.1.100',
+        lan_port: settings.lan_port || 4196,
+      };
+
+      const lines = await diagnoseScales(config);
+      return { success: true, data: { lines } };
+    } catch (error: any) {
+      log.error('Failed to diagnose scales:', error);
+      return { success: false, error: error.message || 'Ошибка диагностики' };
+    }
+  });
+
+  // ─── Получить текущий статус весов ───────────────────────────────────
+  registerRpc('scales:get-status', async (_event, _companyId: string) => {
+    return {
+      success: true,
+      data: {
+        connected: getScaleConnected(),
+        weight: currentWeight,
+        stable: currentStable,
+      }
+    };
+  });
+
+  // ─── Начать стриминг веса ─────────────────────────────────────────────
   registerRpc('scales:start-stream', async (event, companyId: string) => {
     try {
       if (!db) throw new Error('Database not initialized');
@@ -81,17 +150,29 @@ export function setupScalesHandlers() {
       }
 
       const config: ScaleConfig = {
+        connection_type: settings.connection_type || 'com',
         com_port: settings.com_port,
         baud_rate: settings.baud_rate,
-        protocol: settings.protocol,
+        protocol: settings.protocol || 'cas',
+        lan_ip: settings.lan_ip || '192.168.1.100',
+        lan_port: settings.lan_port || 4196,
       };
 
-      activeStream = startWeightStream(config, (reading) => {
-        // Отправляем в рендерер через событие
-        try {
-          event.sender.send('scales:weight-update', reading);
-        } catch { /* window closed */ }
-      });
+      activeStream = startWeightStream(
+        config,
+        (reading) => {
+          currentWeight = reading.weight;
+          currentStable = reading.stable;
+          try {
+            event.sender.send('scales:weight-update', reading);
+          } catch { /* window closed */ }
+        },
+        (connected) => {
+          try {
+            event.sender.send('scales:status-update', { connected });
+          } catch { /* window closed */ }
+        }
+      );
 
       return { success: true };
     } catch (error) {
@@ -100,12 +181,14 @@ export function setupScalesHandlers() {
     }
   });
 
-  // Остановить стриминг веса
+  // ─── Остановить стриминг ──────────────────────────────────────────────
   registerRpc('scales:stop-stream', async () => {
     if (activeStream) {
       activeStream.stop();
       activeStream = null;
     }
+    currentWeight = 0;
+    currentStable = false;
     return { success: true };
   });
 }

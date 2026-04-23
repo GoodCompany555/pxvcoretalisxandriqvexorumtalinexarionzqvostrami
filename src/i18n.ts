@@ -2,6 +2,7 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import ru from './locales/ru.json';
 import kk from './locales/kk.json';
+import en from './locales/en.json';
 
 // Получить сохранённый язык
 const savedLang = localStorage.getItem('pos-language') || 'ru';
@@ -12,6 +13,7 @@ i18n
     resources: {
       ru: { translation: ru },
       kk: { translation: kk },
+      en: { translation: en },
     },
     lng: savedLang,
     fallbackLng: 'ru',

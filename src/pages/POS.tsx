@@ -7,7 +7,7 @@ import {
   ScanLine,
   CreditCard,
   Banknote,
-  QrCode,
+
   X,
   Plus,
   Minus,
@@ -18,6 +18,8 @@ import {
   Timer,
   Loader2,
   ShieldAlert,
+  AlertTriangle,
+  Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/auth';
@@ -28,6 +30,7 @@ import { PrintableReceipt } from '../components/PrintableReceipt';
 import { useReactToPrint } from 'react-to-print';
 import NumPad from '../components/NumPad';
 import { Input } from '../components/ui/input';
+import { fixCyrillicBarcode } from '../utils/formatters';
 
 
 // ====== ТИПЫ МОДАЛОК ======
@@ -40,7 +43,7 @@ export default function POS() {
   const { t } = useTranslation();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [paymentMode, setPaymentMode] = useState<'none' | 'cash' | 'card' | 'card_manual' | 'mixed' | 'qr'>('none');
+  const [paymentMode, setPaymentMode] = useState<'none' | 'cash' | 'card' | 'card_manual' | 'mixed'>('none');
   const [cashGiven, setCashGiven] = useState('');
   const [mixedCash, setMixedCash] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +64,7 @@ export default function POS() {
   // Весы
   const [currentWeight, setCurrentWeight] = useState(0);
   const [weightStable, setWeightStable] = useState(false);
+  const [scaleConnected, setScaleConnected] = useState(false);
   const [weighingProduct, setWeighingProduct] = useState<Product | null>(null);
   const [manualWeight, setManualWeight] = useState('');
 
@@ -96,8 +100,6 @@ export default function POS() {
       sendToDisplay('payment-cash', { total, received, change: Math.max(0, received - total) });
     } else if (paymentMode === 'card' || paymentMode === 'card_manual') {
       sendToDisplay('payment-card', { total });
-    } else if (paymentMode === 'qr') {
-      sendToDisplay('payment-qr', { total });
     } else if (paymentMode === 'mixed') {
       sendToDisplay('payment-cash', { total });
     } else {
@@ -145,6 +147,31 @@ export default function POS() {
   const [catalogProducts, setCatalogProducts] = useState<any[]>([]);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(false);
+
+  // Глобальный статус весов
+  useEffect(() => {
+    if (!company?.id || !window.electronAPI?.scales) return;
+
+    // Подписка на пуш-статусы (если настроено)
+    if (window.electronAPI.scales.onStatusUpdate) {
+      window.electronAPI.scales.onStatusUpdate((data) => {
+        setScaleConnected(data.connected);
+      });
+    }
+
+    const checkScales = async () => {
+      try {
+        const res = await window.electronAPI.scales.getStatus(company.id);
+        if (res.success && res.data) {
+          setScaleConnected(res.data.connected);
+        }
+      } catch { }
+    };
+
+    checkScales();
+    const interval = setInterval(checkScales, 5000);
+    return () => clearInterval(interval);
+  }, [company?.id]);
 
   // Фокус на инпут при загрузке
   useEffect(() => {
@@ -219,11 +246,13 @@ export default function POS() {
         case 'F9':
           if (activeModal === 'none') {
             e.preventDefault();
-            if (cart.length > 0 && paymentMode === 'none') {
-              setPaymentMode('card');
-            } else {
-              setActiveModal('zreport');
-            }
+            // Временное отключение F9 для банковского терминала
+            // if (cart.length > 0 && paymentMode === 'none') {
+            //   setPaymentMode('card');
+            // } else {
+            //   setActiveModal('zreport');
+            // }
+            setActiveModal('zreport'); // F9 теперь открывает только закрытие смены
           }
           break;
         case 'Escape':
@@ -595,11 +624,38 @@ export default function POS() {
     }
   };
 
+  const handleDeferReceipt = async () => {
+    if (cart.length === 0) return;
+    if (!company?.id) return;
+
+    // Авто название с часами/минутами
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const name = `Отложенный чек ${time} (Товаров: ${cart.length})`;
+
+    const loading = toast.loading('Сохранение...');
+    try {
+      const res = await (window as any).electronAPI.pos.deferReceipt(company.id, name, cart);
+      if (res.success) {
+        toast.success(`Чек отложен (${time})`, { id: loading });
+        clearCart();
+        setPaymentMode('none');
+      } else {
+        toast.error(res.error || 'Ошибка', { id: loading });
+      }
+    } catch {
+      toast.error('Ошибка системы', { id: loading });
+    }
+  };
+
+  const isShiftExpired = currentShift?.isExpired === true;
+
   const processPayment = async () => {
     if (cart.length === 0) return;
     if (!window.electronAPI?.pos) { toast.error(t('pos.apiUnavailable')); return; }
     if (!company?.id || !user?.id) { toast.error(t('pos.authError')); return; }
     if (!currentShift?.id) { toast.error(t('pos.shiftClosed')); return; }
+    if (isShiftExpired) { toast.error('Смена превысила 24 часа! Необходимо снять Z-отчет.'); return; }
 
     const missingMarkCodes = cart.filter(item => item.is_marked && !item.mark_code);
     if (missingMarkCodes.length > 0) {
@@ -613,6 +669,22 @@ export default function POS() {
       return;
     }
 
+    if (paymentMode === 'cash') {
+      const cashAmount = parseFloat(cashGiven || '0');
+      if (cashAmount < total) {
+        toast.error(`Внесенная сумма наличных (${cashAmount.toLocaleString('ru')} ₸) меньше суммы чека (${total.toLocaleString('ru')} ₸)`);
+        return;
+      }
+    }
+
+    if (paymentMode === 'mixed') {
+      const mxCash = parseFloat(mixedCash || '0');
+      if (mxCash <= 0 || mxCash >= total) {
+        toast.error('При смешанной оплате сумма наличных должна быть больше 0 и строго меньше суммы чека');
+        return;
+      }
+    }
+
     const payload = {
       companyId: company.id,
       shiftId: currentShift.id,
@@ -620,8 +692,10 @@ export default function POS() {
       paymentType: paymentMode === 'card_manual' ? 'card' : paymentMode,
       items: cart,
       globalDiscount,
-      cashAmount: paymentMode === 'cash' ? parseFloat(cashGiven || '0') : paymentMode === 'mixed' ? parseFloat(mixedCash || '0') : 0,
+      cashAmount: paymentMode === 'cash' ? (total) : paymentMode === 'mixed' ? parseFloat(mixedCash || '0') : 0,
       cardAmount: paymentMode === 'card_manual' ? total : paymentMode === 'mixed' ? (total - parseFloat(mixedCash || '0')) : 0,
+      cashGiven: paymentMode === 'cash' ? parseFloat(cashGiven || '0') : paymentMode === 'mixed' ? parseFloat(mixedCash || '0') : 0,
+      changeAmount: paymentMode === 'cash' ? (parseFloat(cashGiven || '0') - total) : 0,
     };
 
     const loading = toast.loading(t('pos.processing'));
@@ -631,9 +705,19 @@ export default function POS() {
         sendSuccessToDisplay();
         toast.success(t('pos.paymentSuccess'), { id: loading });
         let ofdMsg = `${t('pos.receiptSaved')} #${res.data?.receiptId?.slice(0, 6)}`;
-        if (res.data?.ofdStatus === 'sent') ofdMsg += ` • ${t('pos.fiscalized')}`;
-        else if (res.data?.ofdStatus === 'pending') ofdMsg += ` • ${t('pos.ofdPending')}`;
-        toast.success(ofdMsg, { duration: 5000 });
+        if (res.data?.ofdStatus === 'sent') {
+          ofdMsg += ` • ${t('pos.fiscalized')}`;
+          toast.success(ofdMsg, { duration: 5000 });
+        } else if (res.data?.ofdStatus === 'pending') {
+          if (res.data?.ofdError) {
+            toast.error(`ФИСКАЛИЗАЦИЯ НЕ УДАЛАСЬ: ${res.data.ofdError}`, { duration: 8000 });
+          } else {
+            ofdMsg += ` • ${t('pos.ofdPending')}`;
+            toast.success(ofdMsg, { duration: 5000 });
+          }
+        } else {
+          toast.success(ofdMsg, { duration: 5000 });
+        }
         clearCart();
         setPaymentMode('none');
         setCashGiven('');
@@ -683,10 +767,11 @@ export default function POS() {
               ref={searchInputRef}
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => setSearchQuery(e.target.value.substring(0, 75))}
               className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all font-medium"
               inputMode="none"
               placeholder={t('pos.searchPlaceholder')}
+              maxLength={75}
             />
             <button type="submit" className="hidden">{t('common.search')}</button>
           </form>
@@ -696,6 +781,12 @@ export default function POS() {
           >
             {t('pos.catalog')} (F4)
           </button>
+          {/* Индикатор весов (временно скрыт)
+          <div className="flex items-center gap-2 px-4 bg-gray-50 border border-gray-200 rounded-xl" title="Статус подключения весов">
+            <Scale className={`w-5 h-5 ${scaleConnected ? 'text-green-500' : 'text-gray-400'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full ${scaleConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500'}`} />
+          </div>
+          */}
           {printQueueCount > 0 && (
             <button
               onClick={() => window.electronAPI?.reports?.retryPrint(company!.id)}
@@ -789,6 +880,26 @@ export default function POS() {
             <span>{t('pos.checkDiscount')}</span>
             <span>{globalDiscount > 0 ? `-${globalDiscount}` : '0'} ₸</span>
           </div>
+
+          {isShiftExpired && (
+            <div className="mt-4 p-4 bg-red-500/20 border border-red-500/50 rounded-xl flex items-start gap-3 animate-pulse">
+              <AlertTriangle className="w-6 h-6 text-red-400 shrink-0" />
+              <div>
+                <p className="text-red-200 font-bold text-sm leading-tight">СМЕНА ПРЕВЫСИЛА 24 ЧАСА</p>
+                <p className="text-red-300 text-xs mt-1">Оплата заблокирована. Необходимо снять Z-отчет (F9).</p>
+              </div>
+            </div>
+          )}
+
+          {!isShiftExpired && currentShift?.hoursRemaining < 2 && currentShift?.hoursRemaining > 0 && (
+            <div className="mt-4 p-4 bg-orange-500/20 border border-orange-500/50 rounded-xl flex items-start gap-3">
+              <Clock className="w-6 h-6 text-orange-400 shrink-0" />
+              <div>
+                <p className="text-orange-200 font-bold text-sm leading-tight">СМЕНА СКОРО ИСТЕЧЕТ</p>
+                <p className="text-orange-300 text-xs mt-1">Осталось менее {Math.ceil(currentShift.hoursRemaining * 60)} мин. Не забудьте снять Z-отчет.</p>
+              </div>
+            </div>
+          )}
           {totalVat > 0 && (
             <div className="flex justify-between items-center text-gray-400 text-sm mt-3 pb-2 border-b border-gray-700/50">
               <span>{t('pos.vatIncluded')}</span>
@@ -827,6 +938,7 @@ export default function POS() {
                 <span className="font-bold text-lg">{t('pos.card')}</span>
                 <span className="text-xs mt-1 opacity-70">Ручной ввод</span>
               </button>
+              {/* Временное отключение авто-терминала
               <button
                 onClick={handleCardPayment}
                 className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all ${paymentMode === 'card' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-200 hover:border-blue-300 text-gray-600'}`}
@@ -835,6 +947,7 @@ export default function POS() {
                 <span className="font-bold text-lg">Банковский терминал</span>
                 <span className="text-xs mt-1 opacity-70">{t('pos.autoTerminal')} (F9)</span>
               </button>
+              */}
               <button
                 onClick={() => setPaymentMode('cash')}
                 className={`flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all ${paymentMode === 'cash' ? 'border-green-500 bg-green-50 text-green-700 shadow-sm' : 'border-gray-200 hover:border-green-300 text-gray-600'}`}
@@ -842,13 +955,7 @@ export default function POS() {
                 <Banknote className={`h-10 w-10 mb-3 ${paymentMode === 'cash' ? 'text-green-600' : 'text-gray-400'}`} />
                 <span className="font-bold text-lg">{t('pos.cash')}</span>
               </button>
-              <button
-                onClick={() => setPaymentMode('qr')}
-                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${paymentMode === 'qr' ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-200 hover:border-purple-300 text-gray-600'}`}
-              >
-                <QrCode className="h-8 w-8 mb-2" />
-                <span className="font-semibold">{t('pos.qr')}</span>
-              </button>
+
               <button
                 onClick={() => setPaymentMode('mixed')}
                 className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${paymentMode === 'mixed' ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-200 hover:border-indigo-300 text-gray-600'}`}
@@ -868,15 +975,19 @@ export default function POS() {
                 <Input
                   type="number"
                   min="0"
+                  max="100000000"
                   step="1"
                   data-has-numpad="true"
                   value={cashGiven}
-                  onChange={(e) => setCashGiven(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? '' : Math.min(100000000, parseFloat(e.target.value) || 0).toString();
+                    setCashGiven(val);
+                  }}
                   inputMode="none"
                   className="w-full text-3xl font-bold bg-white border border-green-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500"
                   placeholder={total.toString()}
                 />
-                <NumPad value={cashGiven} onChange={setCashGiven} onEnter={processPayment} />
+                <NumPad value={cashGiven} onChange={setCashGiven} onEnter={processPayment} maxValue={100000000} />
                 {parseFloat(cashGiven || '0') > total && (
                   <div className="mt-4 flex justify-between items-center text-lg">
                     <span className="text-green-800 font-medium">{t('pos.change')}:</span>
@@ -895,15 +1006,19 @@ export default function POS() {
                 <Input
                   type="number"
                   min="0"
+                  max="100000000"
                   step="1"
                   data-has-numpad="true"
                   value={mixedCash}
-                  onChange={(e) => setMixedCash(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? '' : Math.min(100000000, parseFloat(e.target.value) || 0).toString();
+                    setMixedCash(val);
+                  }}
                   inputMode="none"
                   className="w-full text-2xl font-bold bg-white border border-indigo-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="0"
                 />
-                <NumPad value={mixedCash} onChange={setMixedCash} onEnter={processPayment} />
+                <NumPad value={mixedCash} onChange={setMixedCash} onEnter={processPayment} maxValue={100000000} />
                 <div className="mt-3 flex justify-between items-center text-lg">
                   <span className="text-indigo-800 font-medium">💳 Картой:</span>
                   <span className="font-bold text-xl text-indigo-700">
@@ -922,8 +1037,16 @@ export default function POS() {
                 <X className="w-8 h-8" />
               </button>
               <button
+                onClick={handleDeferReceipt}
+                disabled={cart.length === 0}
+                className="px-6 py-4 font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors disabled:opacity-50"
+                title="Отложить чек"
+              >
+                <Timer className="w-8 h-8" />
+              </button>
+              <button
                 onClick={processPayment}
-                disabled={cart.length === 0 || paymentMode === 'none' || (paymentMode === 'cash' && parseFloat(cashGiven || '0') < total && cashGiven !== '') || (paymentMode === 'mixed' && !(parseFloat(mixedCash || '0') > 0))}
+                disabled={cart.length === 0 || paymentMode === 'none' || isShiftExpired || (paymentMode === 'cash' && parseFloat(cashGiven || '0') < total && cashGiven !== '') || (paymentMode === 'mixed' && !(parseFloat(mixedCash || '0') > 0))}
                 className="flex-1 bg-primary hover:bg-primary/90 text-white font-bold text-xl rounded-xl shadow-lg shadow-primary/30 transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:shadow-none flex items-center justify-center gap-3 py-4"
               >
                 {t('pos.pay')} <span className="opacity-70 text-sm font-normal">(Enter)</span>
@@ -1065,11 +1188,15 @@ export default function POS() {
                 step="any"
                 min="0"
                 value={manualWeight}
-                onChange={(e) => setManualWeight(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? '' : Math.min(1000, parseFloat(e.target.value) || 0).toString();
+                  setManualWeight(val);
+                }}
                 className="w-full text-2xl font-bold bg-white border border-blue-200 rounded-xl px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Например: 0.450"
+                max={1000}
               />
-              <NumPad value={manualWeight} onChange={setManualWeight} onEnter={confirmWeight} />
+              <NumPad value={manualWeight} onChange={setManualWeight} onEnter={confirmWeight} maxValue={1000000} />
             </div>
 
             <div className="bg-gray-50 rounded-xl p-4 flex justify-between items-center mb-6">
@@ -1174,10 +1301,14 @@ export default function POS() {
                 min="0"
                 step="1"
                 value={discountInput}
-                onChange={(e) => setDiscountInput(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? '' : Math.min(1000000, parseFloat(e.target.value) || 0).toString();
+                  setDiscountInput(val);
+                }}
                 inputMode="none"
                 className="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary text-xl font-bold"
                 placeholder="0"
+                max={1000000}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -1228,10 +1359,11 @@ export default function POS() {
                 <Input
                   ref={markCodeInputRef}
                   value={markCodeInput}
-                  onChange={(e) => setMarkCodeInput(e.target.value)}
+                  onChange={(e) => setMarkCodeInput(fixCyrillicBarcode(e.target.value.substring(0, 255)))}
                   placeholder="Отсканируйте код..."
                   className="w-full text-center text-lg h-12 border-purple-200 focus:border-purple-500 focus:ring-purple-500"
                   autoComplete="off"
+                  maxLength={75}
                 />
 
                 <div className="mt-6 flex gap-3">

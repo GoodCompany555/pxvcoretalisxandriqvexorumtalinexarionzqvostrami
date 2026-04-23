@@ -10,8 +10,10 @@ import {
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
+import { useTranslation } from 'react-i18next';
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const { user, company } = useAuthStore();
   const [stats, setStats] = useState({
     todaySales: 0,
@@ -54,8 +56,8 @@ export default function Dashboard() {
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Добро пожаловать, {user?.full_name}</h1>
-        <p className="text-gray-500 mt-1">Краткая сводка показателей магазина</p>
+        <h1 className="text-2xl font-bold text-gray-900">{t('dashboard.welcome', 'Добро пожаловать')}, {user?.full_name}</h1>
+        <p className="text-gray-500 mt-1">{t('dashboard.subtitle', 'Краткая сводка показателей магазина')}</p>
       </div>
 
       {/* Stats row */}
@@ -65,7 +67,7 @@ export default function Dashboard() {
             <Banknote className="h-6 w-6 text-green-600" />
           </div>
           <div className="ml-4">
-            <p className="text-sm font-medium text-gray-500">Выручка сегодня</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboard.todaySales', 'Выручка сегодня')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.todaySales.toLocaleString('ru')} ₸</p>
           </div>
         </div>
@@ -75,7 +77,7 @@ export default function Dashboard() {
             <TrendingUp className="h-6 w-6 text-blue-600" />
           </div>
           <div className="ml-4">
-            <p className="text-sm font-medium text-gray-500">Выручка за месяц</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboard.monthSales', 'Выручка за месяц')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.monthSales.toLocaleString('ru')} ₸</p>
           </div>
         </div>
@@ -85,7 +87,7 @@ export default function Dashboard() {
             <CartIcon className="h-6 w-6 text-purple-600" />
           </div>
           <div className="ml-4">
-            <p className="text-sm font-medium text-gray-500">Чеков за сегодня</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboard.receiptCount', 'Чеков за сегодня')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.receiptCount}</p>
           </div>
         </div>
@@ -95,8 +97,8 @@ export default function Dashboard() {
             <AlertTriangle className="h-6 w-6 text-red-600" />
           </div>
           <div className="ml-4">
-            <p className="text-sm font-medium text-gray-500">Мало на складе</p>
-            <p className="text-2xl font-bold text-red-600">{stats.lowStockItems} товаров</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboard.lowStockItems', 'Мало на складе')}</p>
+            <p className="text-2xl font-bold text-red-600">{stats.lowStockItems} {t('inventory.product', 'товар(ов)')}</p>
           </div>
         </div>
       </div>
@@ -104,7 +106,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Chart */}
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">Динамика продаж (неделя)</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-6">{t('dashboard.salesDynamics', 'Динамика продаж (неделя)')}</h2>
           <div className="h-80 w-full">
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -118,7 +120,7 @@ export default function Dashboard() {
                     tickFormatter={(value) => `${value / 1000}k`}
                   />
                   <Tooltip
-                    formatter={(value: number) => [`${value.toLocaleString('ru')} ₸`, 'Выручка']}
+                    formatter={(value: number) => [`${value.toLocaleString('ru')} ₸`, t('reports.revenueCol', 'Выручка')]}
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                   />
                   <Line
@@ -135,8 +137,8 @@ export default function Dashboard() {
               <div className="flex items-center justify-center h-full text-gray-400">
                 <div className="text-center">
                   <TrendingUp className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                  <p className="font-medium">Нет данных о продажах</p>
-                  <p className="text-sm mt-1">Пробейте первый товар чтобы увидеть аналитику</p>
+                  <p className="font-medium">{t('reports.noSales', 'Нет данных о продажах')}</p>
+                  <p className="text-sm mt-1">{t('dashboard.noSalesHint', 'Пробейте первый товар чтобы увидеть аналитику')}</p>
                 </div>
               </div>
             )}
@@ -145,7 +147,7 @@ export default function Dashboard() {
 
         {/* Top Products */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">Топ продаваемых товаров</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-6">{t('reports.topProducts', 'Топ продаваемых товаров')}</h2>
           <div className="space-y-4">
             {topProducts.length > 0 ? topProducts.map((item, i) => (
               <div key={i} className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b border-gray-50 last:border-0 last:pb-0">
@@ -155,18 +157,18 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                    <p className="text-xs text-gray-500">{item.price} ₸ / шт</p>
+                    <p className="text-xs text-gray-500">{item.price} ₸ / {t('common.pcs', 'шт')}</p>
                   </div>
                 </div>
                 <div className="mt-2 sm:mt-0 px-2.5 py-1 bg-green-50 text-green-700 text-xs font-semibold rounded-full border border-green-100">
-                  {item.count} шт
+                  {item.count} {t('common.pcs', 'шт')}
                 </div>
               </div>
             )) : (
               <div className="text-center text-gray-400 py-8">
                 <CartIcon className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p className="font-medium">Пока нет продаж</p>
-                <p className="text-sm mt-1">Данные появятся после первых чеков</p>
+                <p className="font-medium">{t('reports.noSales', 'Пока нет продаж')}</p>
+                <p className="text-sm mt-1">{t('dashboard.dataWillAppear', 'Данные появятся после первых чеков')}</p>
               </div>
             )}
           </div>

@@ -4,6 +4,8 @@ import { Users, Plus, Edit2, Shield, EyeOff, Eye, Loader2, KeyRound } from 'luci
 import toast from 'react-hot-toast';
 import { KeyboardIcon } from '../components/KeyboardIcon';
 import { Input } from '../components/ui/input';
+import { useTranslation } from 'react-i18next';
+import { CustomSelect } from '../components/ui/CustomSelect';
 
 
 type UserRole = 'admin' | 'manager' | 'cashier' | 'accountant';
@@ -20,27 +22,28 @@ interface User {
 }
 
 // Перечень прав доступа
-const ALL_PERMISSIONS = [
-  { key: 'pos', label: 'Касса (Продажи)' },
-  { key: 'returns', label: 'Возвраты' },
-  { key: 'inventory', label: 'Склад' },
-  { key: 'purchases', label: 'Закупки' },
-  { key: 'clients', label: 'Контрагенты' },
-  { key: 'documents', label: 'Документы' },
-  { key: 'reports', label: 'Отчёты' },
-  { key: 'staff', label: 'Управление персоналом' },
-  { key: 'settings', label: 'Настройки' },
+const ALL_PERMISSION_KEYS = [
+  { key: 'pos', labelKey: 'staff.permPos' },
+  { key: 'returns', labelKey: 'staff.permReturns' },
+  { key: 'inventory', labelKey: 'staff.permInventory' },
+  { key: 'purchases', labelKey: 'staff.permPurchases' },
+  { key: 'clients', labelKey: 'staff.permClients' },
+  { key: 'documents', labelKey: 'staff.permDocuments' },
+  { key: 'reports', labelKey: 'staff.permReports' },
+  { key: 'staff', labelKey: 'staff.permStaff' },
+  { key: 'settings', labelKey: 'staff.permSettings' },
 ] as const;
 
 // Предустановленные права по ролям
 const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  admin: ALL_PERMISSIONS.map(p => p.key),
+  admin: ALL_PERMISSION_KEYS.map(p => p.key),
   manager: ['pos', 'returns', 'inventory', 'purchases', 'clients', 'documents', 'reports', 'staff'],
   cashier: ['pos', 'returns'],
   accountant: ['reports', 'inventory', 'purchases', 'clients', 'documents'],
 };
 
 export default function Personnel() {
+  const { t } = useTranslation();
   const companyId = useAuthStore(state => state.company?.id);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +71,7 @@ export default function Personnel() {
     if (res.success && res.data) {
       setUsers(res.data);
     } else {
-      toast.error('Ошибка загрузки сотрудников');
+      toast.error(t('staff.loadError'));
     }
     setLoading(false);
   };
@@ -107,7 +110,7 @@ export default function Personnel() {
     if (!companyId || !window.electronAPI?.users) return;
 
     if (!editingUser && !password) {
-      toast.error('Введите пароль для нового сотрудника');
+      toast.error(t('staff.enterPassword'));
       return;
     }
 
@@ -124,7 +127,7 @@ export default function Personnel() {
       permissions: extraPermissions
     };
 
-    const loadingToast = toast.loading('Сохранение...');
+    const loadingToast = toast.loading(t('common.saving'));
 
     let res;
     if (editingUser) {
@@ -134,11 +137,11 @@ export default function Personnel() {
     }
 
     if (res.success) {
-      toast.success(editingUser ? 'Изменения сохранены' : 'Сотрудник добавлен', { id: loadingToast });
+      toast.success(editingUser ? t('staff.saved') : t('staff.added'), { id: loadingToast });
       setIsModalOpen(false);
       fetchUsers();
     } else {
-      toast.error(res.error || 'Ошибка', { id: loadingToast });
+      toast.error(res.error || t('common.error', 'Ошибка'), { id: loadingToast });
     }
   };
 
@@ -147,10 +150,10 @@ export default function Personnel() {
     const newStatus = user.is_active === 1 ? false : true;
     const res = await window.electronAPI.users.toggleStatus(companyId, user.id, newStatus);
     if (res.success) {
-      toast.success(`Сотрудник ${newStatus ? 'активирован' : 'деактивирован'}`);
+      toast.success(`${t('staff.employee')} ${newStatus ? t('staff.activated') : t('staff.deactivated')}`);
       fetchUsers();
     } else {
-      toast.error('Ошибка изменения статуса');
+      toast.error(t('staff.statusError'));
     }
   };
 
@@ -162,10 +165,10 @@ export default function Personnel() {
   };
 
   const roleNames: Record<UserRole, string> = {
-    admin: 'Администратор',
-    manager: 'Менеджер',
-    cashier: 'Кассир',
-    accountant: 'Бухгалтер',
+    admin: t('staff.admin'),
+    manager: t('staff.manager'),
+    cashier: t('staff.cashier'),
+    accountant: t('staff.accountant'),
   };
 
   // Получить права текущей выбранной роли
@@ -179,15 +182,15 @@ export default function Personnel() {
     <div className="p-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Персонал</h1>
-          <p className="text-gray-500 mt-1">Управление сотрудниками, ролями и доступом</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('staff.title')}</h1>
+          <p className="text-gray-500 mt-1">{t('staff.subtitle')}</p>
         </div>
         <button
           onClick={() => handleOpenModal()}
           className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl hover:bg-primary-hover transition-colors font-medium shadow-sm"
         >
           <Plus className="w-5 h-5" />
-          Добавить сотрудника
+          {t('staff.add')}
         </button>
       </div>
 
@@ -196,11 +199,11 @@ export default function Personnel() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Роль</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">ПИН-код</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Статус</th>
-                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Действия</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('staff.employee')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('staff.role')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('staff.pin')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('staff.status')}</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('staff.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -220,26 +223,26 @@ export default function Personnel() {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-1 text-gray-500 text-sm">
                       <KeyRound className="w-4 h-4" />
-                      {user.pin_code ? 'Установлен' : 'Нет'}
+                      {user.pin_code ? t('staff.pinSet') : t('staff.pinNotSet')}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${user.is_active === 1 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {user.is_active === 1 ? 'Активен' : 'Заблокирован'}
+                      {user.is_active === 1 ? t('staff.active') : t('staff.blocked')}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
                       onClick={() => handleOpenModal(user)}
                       className="text-primary hover:text-primary-hover p-2 transition-colors mr-2"
-                      title="Редактировать"
+                      title={t('staff.editAction', 'Редактировать')}
                     >
                       <Edit2 className="w-5 h-5" />
                     </button>
                     <button
                       onClick={() => handleToggleStatus(user)}
                       className={`${user.is_active === 1 ? 'text-red-500 hover:text-red-700' : 'text-green-500 hover:text-green-700'} p-2 transition-colors`}
-                      title={user.is_active ? 'Заблокировать' : 'Активировать'}
+                      title={user.is_active ? t('staff.blockBtn', 'Заблокировать') : t('staff.activateBtn', 'Активировать')}
                     >
                       {user.is_active === 1 ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
@@ -250,7 +253,7 @@ export default function Personnel() {
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
                     <Users className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-                    <p>Сотрудники не найдены</p>
+                    <p>{t('staff.noEmployees')}</p>
                   </td>
                 </tr>
               )}
@@ -264,7 +267,7 @@ export default function Personnel() {
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900">
-                {editingUser ? 'Редактировать сотрудника' : 'Новый сотрудник'}
+                {editingUser ? t('staff.edit') : t('staff.new')}
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">
                 <Plus className="w-6 h-6 rotate-45" />
@@ -273,15 +276,16 @@ export default function Personnel() {
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">ФИО</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.fullName')}</label>
                 <div className="relative">
                   <Input
                     type="text"
                     required
                     value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
+                    onChange={(e) => setFullName(e.target.value.substring(0, 75))}
                     className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                    placeholder="Иванов Иван"
+                    placeholder={t('staff.fullNamePlaceholder', 'Иванов Иван')}
+                    maxLength={75}
                   />
                   <KeyboardIcon />
                 </div>
@@ -289,35 +293,36 @@ export default function Personnel() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Логин</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.login')}</label>
                   <div className="relative">
                     <Input
                       type="text"
                       required
                       value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={(e) => setUsername(e.target.value.substring(0, 50))}
                       className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                      placeholder="ivan"
+                      placeholder={t('staff.loginPlaceholder', 'ivan')}
+                      maxLength={50}
                     />
                     <KeyboardIcon />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.password')}</label>
                   <Input
                     type="password"
                     required={!editingUser}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                    placeholder={editingUser ? 'Оставить старый' : '••••••'}
+                    placeholder={editingUser ? t('staff.leaveOld') : '••••••'}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ПИН-код (цифры)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.pinDigits')}</label>
                   <div className="relative">
                     <Input
                       type="text"
@@ -332,7 +337,7 @@ export default function Personnel() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ИИН</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.iin')}</label>
                   <div className="relative">
                     <Input
                       type="text"
@@ -340,7 +345,7 @@ export default function Personnel() {
                       value={iin}
                       onChange={(e) => setIin(e.target.value)}
                       className="w-full px-4 py-2 pr-10 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary font-mono"
-                      placeholder="010101501501"
+                      placeholder={t('staff.iinPlaceholder', '010101501501')}
                     />
                     <KeyboardIcon />
                   </div>
@@ -348,27 +353,28 @@ export default function Personnel() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Роль</label>
-                <select
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('staff.role')}</label>
+                <CustomSelect
                   value={role}
-                  onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary"
-                >
-                  <option value="admin">Администратор</option>
-                  <option value="manager">Менеджер</option>
-                  <option value="cashier">Кассир</option>
-                  <option value="accountant">Бухгалтер</option>
-                </select>
+                  onChange={(val) => setRole(val as UserRole)}
+                  className="w-full"
+                  options={[
+                    { value: 'admin', label: t('staff.admin') },
+                    { value: 'manager', label: t('staff.manager') },
+                    { value: 'cashier', label: t('staff.cashier') },
+                    { value: 'accountant', label: t('staff.accountant') }
+                  ]}
+                />
               </div>
 
               {/* Блок отображения прав по роли */}
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
                 <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <Shield className="w-4 h-4" />
-                  Права доступа для роли «{roleNames[role]}»
+                  {t('staff.permissions')} «{roleNames[role]}»
                 </h4>
                 <div className="grid grid-cols-2 gap-2">
-                  {ALL_PERMISSIONS.map(perm => {
+                  {ALL_PERMISSION_KEYS.map(perm => {
                     const isBasePermission = currentPermissions.includes(perm.key);
                     const isExtraGranted = extraPermissions[perm.key];
                     const isGranted = isBasePermission || isExtraGranted;
@@ -392,7 +398,7 @@ export default function Personnel() {
                           <span className={`w-2 h-2 rounded-full ${isGranted ? 'bg-green-500' : 'bg-gray-300'}`} />
                         )}
                         <span className={isGranted ? 'text-gray-800' : 'text-gray-400'}>
-                          {perm.label} {isExtraGranted && !isBasePermission && <span className="text-xs text-primary bg-primary/10 px-1.5 py-0.5 rounded ml-1">Доп</span>}
+                          {t(perm.labelKey)} {isExtraGranted && !isBasePermission && <span className="text-xs text-primary bg-primary/10 px-1.5 py-0.5 rounded ml-1">{t('staff.extra')}</span>}
                         </span>
                       </div>
                     );
@@ -410,7 +416,7 @@ export default function Personnel() {
                     className="w-4 h-4 text-primary bg-gray-100 border-gray-300 rounded focus:ring-primary"
                   />
                   <label htmlFor="isActive" className="text-sm font-medium text-gray-700">
-                    Аккаунт активен
+                    {t('staff.accountActive')}
                   </label>
                 </div>
               )}
@@ -421,13 +427,13 @@ export default function Personnel() {
                   onClick={() => setIsModalOpen(false)}
                   className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-medium rounded-xl hover:bg-gray-200 transition-colors border border-gray-200"
                 >
-                  Отмена
+                  {t('staff.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-4 py-2 bg-primary text-white font-medium rounded-xl hover:bg-primary-hover transition-colors"
                 >
-                  {editingUser ? 'Сохранить' : 'Добавить'}
+                  {editingUser ? t('staff.saveBtn') : t('staff.addBtn')}
                 </button>
               </div>
             </form>

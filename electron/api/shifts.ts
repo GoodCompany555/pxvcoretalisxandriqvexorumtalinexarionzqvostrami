@@ -4,6 +4,7 @@ import { mainWindow } from '../main';
 import { db } from '../database'
 import log from 'electron-log'
 import { v4 as uuidv4 } from 'uuid'
+import { WebkassaService } from '../services/webkassa'
 
 export function setupShiftHandlers() {
   // Получить текущую открытую смену пользователя
@@ -15,7 +16,15 @@ export function setupShiftHandlers() {
         SELECT * FROM shifts 
         WHERE company_id = ? AND is_closed = 0
         ORDER BY opened_at DESC LIMIT 1
-      `).get(companyId);
+      `).get(companyId) as any;
+
+      if (shift) {
+        const openedAt = new Date(shift.opened_at).getTime();
+        const now = Date.now();
+        const hoursPassed = (now - openedAt) / (1000 * 60 * 60);
+        shift.isExpired = hoursPassed >= 24;
+        shift.hoursRemaining = Math.max(0, 24 - hoursPassed);
+      }
 
       return { success: true, data: shift || null };
     } catch (error) {
@@ -81,8 +90,25 @@ export function setupShiftHandlers() {
     try {
       if (!db) throw new Error('Database not initialized');
 
+      // 1. Отправляем в ОФД первую очередь, чтобы в случае ошибки ОФД локальная БД не изменилась
+      const settings = db.prepare('SELECT ofd_provider FROM settings WHERE company_id = ?').get(companyId) as any;
+
+      let ofdTicketUrl = '';
+
+      const operationId = uuidv4();
+      if (settings && settings.ofd_provider && settings.ofd_provider !== 'none') {
+        const webkassa = new WebkassaService(companyId);
+
+        const ofdStatus = await webkassa.cashOperation(type, amount, operationId);
+        if (!ofdStatus.success && ofdStatus.error !== 'OFD Disabled') {
+          throw new Error(ofdStatus.error || 'Ошибка ОФД WebKassa при служебной операции');
+        }
+        ofdTicketUrl = ofdStatus.ticketUrl || '';
+      }
+
+      // 2. Обновляем локальную базу данных
       const transaction = db.transaction(() => {
-        const shift = db.prepare('SELECT end_cash FROM shifts WHERE id = ? AND company_id = ? AND is_closed = 0').get(shiftId, companyId) as { end_cash: number };
+        const shift = db.prepare('SELECT user_id, end_cash FROM shifts WHERE id = ? AND company_id = ? AND is_closed = 0').get(shiftId, companyId) as { user_id: string, end_cash: number };
         if (!shift) throw new Error('Смена не найдена или закрыта');
 
         let newCash = shift.end_cash;
@@ -93,10 +119,16 @@ export function setupShiftHandlers() {
         }
 
         db.prepare('UPDATE shifts SET end_cash = ? WHERE id = ?').run(newCash, shiftId);
+
+        // Запись операции в таблицу cash_operations
+        db.prepare(`
+          INSERT INTO cash_operations (id, company_id, shift_id, user_id, type, amount, ofd_ticket_url)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(operationId, companyId, shiftId, shift.user_id, type, amount, ofdTicketUrl);
       });
 
       transaction();
-      return { success: true };
+      return { success: true, data: { ticketUrl: ofdTicketUrl } };
     } catch (error: any) {
       log.error('Failed to perform cash operation:', error);
       return { success: false, error: error.message || 'Ошибка выполнения служебной операции' };

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import easykassaLogo from '../assets/easykassa.png';
 
 type DisplayMode = 'idle' | 'sale' | 'payment-card' | 'payment-cash' | 'payment-qr' | 'success';
 
@@ -69,7 +68,7 @@ function IdleScreen() {
 
       {/* Логотип */}
       <img
-        src={easykassaLogo}
+        src="./easykassa.png"
         alt="EasyKassa"
         className="h-32 w-auto object-contain mb-6"
         style={{ filter: 'drop-shadow(0 4px 30px rgba(139,92,246,0.5))' }}
