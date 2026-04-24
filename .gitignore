@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.env
+.env.local

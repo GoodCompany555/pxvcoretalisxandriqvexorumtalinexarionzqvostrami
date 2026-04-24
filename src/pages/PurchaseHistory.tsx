@@ -1,0 +1,545 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { FileText, Printer, Undo2, Eye, ChevronLeft, Loader2, Search, RefreshCcw, Package, Timer, Play, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { usePosStore } from '../store/pos';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '../store/auth';
+import { useSettingsStore } from '../store/settings';
+import { useShiftStore } from '../store/shift';
+import { useTranslation } from 'react-i18next';
+import { PrintableReceipt } from '../components/PrintableReceipt';
+import { useReactToPrint } from 'react-to-print';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Input } from '../components/ui/input';
+
+
+export default function PurchaseHistory() {
+  const { company, user } = useAuthStore();
+  const { currentShift } = useShiftStore();
+  const { t } = useTranslation();
+
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'sales' | 'deferred'>('sales');
+  const [deferredReceipts, setDeferredReceipts] = useState<any[]>([]);
+
+  const [receipts, setReceipts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    receipt: null as any,
+  });
+
+  const [deleteDialog, setDeleteDialog] = useState({
+    isOpen: false,
+    id: null as string | null,
+  });
+
+  useEffect(() => {
+    if (company?.id) loadReceipts();
+  }, [company?.id]);
+
+  const loadReceipts = async () => {
+    if (!company?.id) return;
+    setLoading(true);
+    try {
+      const res = await window.electronAPI.pos.getReceipts(company.id);
+      if (res.success && res.data) setReceipts(res.data);
+      else toast.error(res.error || t('common.error', 'Ошибка'));
+
+      const defRes = await (window as any).electronAPI.pos.getDeferred(company.id);
+      if (defRes?.success && defRes.data) setDeferredReceipts(defRes.data);
+    } catch { toast.error(t('purchaseHistory.loadError', 'Ошибка загрузки')); }
+    finally { setLoading(false); }
+  };
+
+  const handleRestoreDeferred = async (id: string, cartData: any[]) => {
+    const loader = toast.loading('Восстанавливаем...');
+    try {
+      usePosStore.getState().restoreCart(cartData);
+      await (window as any).electronAPI.pos.deleteDeferred(id);
+      toast.success('Чек восстановлен', { id: loader });
+      navigate('/');
+    } catch {
+      toast.error('Ошибка', { id: loader });
+    }
+  };
+
+  const requestDeleteDeferred = (id: string) => {
+    setDeleteDialog({ isOpen: true, id });
+  };
+
+  const confirmDeleteDeferred = async () => {
+    if (!deleteDialog.id) return;
+    const id = deleteDialog.id;
+    setDeleteDialog({ isOpen: false, id: null });
+    const loader = toast.loading('Удаление...');
+    try {
+      await (window as any).electronAPI.pos.deleteDeferred(id);
+      setDeferredReceipts(prev => prev.filter(r => r.id !== id));
+      if (selectedReceipt?.id === id) setSelectedReceipt(null);
+      toast.success('Удалено', { id: loader });
+    } catch { toast.error('Ошибка', { id: loader }); }
+  };
+
+  const openReceiptDetails = async (receiptId: string) => {
+    if (!company?.id) return;
+    setDetailLoading(true);
+    try {
+      const res = await window.electronAPI.pos.getReceiptDetails(company.id, receiptId);
+      if (res.success && res.data) setSelectedReceipt(res.data);
+      else toast.error(res.error || t('common.error', 'Ошибка'));
+    } catch { toast.error(t('purchaseHistory.detailsLoadError', 'Ошибка загрузки деталей')); }
+    finally { setDetailLoading(false); }
+  };
+
+
+
+  const receiptPrintRef = useRef<HTMLDivElement>(null);
+  const [completedReceiptData, setCompletedReceiptData] = useState<any>(null);
+
+  const performPrint = useReactToPrint({
+    contentRef: receiptPrintRef,
+    documentTitle: t('purchaseHistory.duplicate', 'Дубликат чека'),
+    onAfterPrint: () => setCompletedReceiptData(null)
+  });
+
+  useEffect(() => {
+    if (completedReceiptData) {
+      setTimeout(() => performPrint(), 300);
+    }
+  }, [completedReceiptData, performPrint]);
+
+  const handleReprint = async (receiptId: string) => {
+    if (!company?.id) return;
+    const loader = toast.loading(t('purchaseHistory.creatingDuplicate', 'Формирование дубликата...'));
+    try {
+      const res = await window.electronAPI.pos.reprintReceipt(company.id, receiptId);
+      if (res.success && res.data) {
+        toast.success(t('purchaseHistory.duplicateReady', { number: res.data.receipt_number, defaultValue: `Дубликат чека #${res.data.receipt_number} готов` }), { id: loader });
+
+        // Форматируем данные для компонента печати
+        setCompletedReceiptData({
+          companyName: company.name,
+          companyBin: company.bin,
+          companyAddress: company.address,
+          cashierName: res.data.cashier_name,
+          receiptNumber: res.data.receipt_number,
+          items: (res.data.items || []).map((i: any) => ({
+            name: i.name || t('common.product', 'Товар'),
+            name_kk: i.name_kk || '',
+            quantity: i.quantity,
+            price: i.price,
+            total: i.total
+          })),
+          totalAmount: res.data.total_amount,
+          vatAmount: Math.round(res.data.total_amount * 16 / 116),
+          cashAmount: res.data.cash_amount,
+          cardAmount: res.data.card_amount,
+          paymentType: res.data.payment_type,
+          ofdTicketUrl: res.data.ofd_ticket_url,
+          date: new Date(res.data.created_at).toLocaleString('ru-RU'),
+          type: res.data.type // Важно для вывода Возврат
+        });
+      } else {
+        toast.error(res.error || t('common.error', 'Ошибка'), { id: loader });
+      }
+    } catch { toast.error(t('purchaseHistory.printError', 'Ошибка печати'), { id: loader }); }
+  };
+
+  const handleReturnClick = (receipt: any) => {
+    if (!company?.id || !user?.id || !currentShift?.id) {
+      toast.error(t('purchaseHistory.shiftNotOpen', 'Невозможно оформить возврат: смена не открыта'));
+      return;
+    }
+
+    if (!receipt.items || receipt.items.length === 0) {
+      toast.error(t('purchaseHistory.noItemsToReturn', 'Нет позиций для возврата'));
+      return;
+    }
+
+    setConfirmDialog({ isOpen: true, receipt });
+  };
+
+  const handleConfirmReturn = async () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+    const { receipt } = confirmDialog;
+    if (!company?.id || !user?.id || !currentShift?.id || !receipt) return;
+
+    const loader = toast.loading(t('purchaseHistory.processingReturn', 'Оформляем возврат...'));
+    try {
+      // Предварительная проверка на бэкенде: если возврат уже был, вернется ошибка
+      const checkRes = await window.electronAPI.returns.searchReceipt(company.id, receipt.receipt_number);
+      if (!checkRes.success) {
+        toast.error(checkRes.error || t('purchaseHistory.returnError', 'Ошибка возврата'), { id: loader });
+        return;
+      }
+
+      const res = await window.electronAPI.returns.process({
+        companyId: company.id,
+        shiftId: currentShift.id,
+        userId: user.id,
+        originalReceiptId: receipt.id,
+        paymentType: receipt.payment_type,
+        returnCashAmount: Number(receipt.cash_amount) || 0,
+        returnCardAmount: Number(receipt.card_amount) || 0,
+        items: receipt.items.map((item: any) => ({
+          id: item.product_id,
+          product_name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          discount: item.discount || 0,
+          total: item.total,
+          mark_code: item.mark_code || null,
+        })),
+      });
+      if (res.success) {
+        toast.success(t('purchaseHistory.returnProcessed', { number: res.data?.receiptId?.slice(0, 8), defaultValue: `Возврат оформлен! Чек возврата: #${res.data?.receiptId?.slice(0, 8)}` }), { id: loader });
+        loadReceipts();
+        setSelectedReceipt(null);
+        if (res.data?.receiptId) {
+          handleReprint(res.data.receiptId);
+        }
+      } else {
+        toast.error(res.error || t('purchaseHistory.returnError', 'Ошибка возврата'), { id: loader });
+      }
+    } catch { toast.error(t('purchaseHistory.returnProcessingError', 'Ошибка оформления возврата'), { id: loader }); }
+  };
+
+  // Фильтрация
+  const sourceList = activeTab === 'sales' ? receipts : deferredReceipts;
+  const filteredList = sourceList.filter(r => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    if (activeTab === 'deferred') return (r.name || '').toLowerCase().includes(q);
+    return (
+      String(r.receipt_number).includes(q) ||
+      (r.cashier_name || '').toLowerCase().includes(q) ||
+      (r.payment_type || '').toLowerCase().includes(q)
+    );
+  });
+
+  return (
+    <div className="flex h-full overflow-hidden bg-gray-50">
+      {/* Список чеков */}
+      <div className="w-[480px] bg-white flex flex-col border-r border-gray-200">
+        <div className="p-5 border-b border-gray-100">
+          <h1 className="text-xl font-bold text-gray-900 mb-3 flex items-center gap-2">
+            <FileText className="w-6 h-6 text-primary" /> {t('purchaseHistory.title', 'История покупок')}
+          </h1>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+              <Input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-primary"
+                placeholder={activeTab === 'sales' ? t('purchaseHistory.searchPlaceholder', 'Поиск по номеру чека...') : 'Поиск по названию...'}
+              />
+            </div>
+            <button onClick={loadReceipts} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors">
+              <RefreshCcw className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex gap-1 p-1 bg-gray-100 rounded-lg mt-4">
+            <button
+              onClick={() => { setActiveTab('sales'); setSelectedReceipt(null); }}
+              className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${activeTab === 'sales' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Продажи
+            </button>
+            <button
+              onClick={() => { setActiveTab('deferred'); setSelectedReceipt(null); }}
+              className={`flex-1 flex justify-center items-center gap-1.5 py-1.5 text-sm font-semibold rounded-md transition-all ${activeTab === 'deferred' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <Timer className="w-4 h-4" /> Отложенные ({deferredReceipts.length})
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+            </div>
+          ) : filteredList.length === 0 ? (
+            <div className="text-center text-gray-400 py-20">
+              <FileText className="w-12 h-12 mx-auto mb-3 text-gray-200" />
+              <p className="font-medium">{t('purchaseHistory.emptyState', 'Чеков нет')}</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {filteredList.map(receipt => {
+                const isDeferred = activeTab === 'deferred';
+                const total = isDeferred ?
+                  (receipt.cart_data?.reduce?.((acc: number, item: any) => acc + (item.subtotal || (item.price_retail * item.quantity) || 0), 0) || 0) :
+                  Number(receipt.total_amount);
+
+                return (
+                  <button
+                    key={receipt.id}
+                    onClick={() => {
+                      if (isDeferred) setSelectedReceipt({ ...receipt, isDeferred: true });
+                      else openReceiptDetails(receipt.id);
+                    }}
+                    className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${selectedReceipt?.id === receipt.id ? 'bg-primary/5 border-l-4 border-primary' : ''}`}
+                  >
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-gray-900">{isDeferred ? receipt.name : `#${receipt.receipt_number}`}</span>
+                        {!isDeferred && (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${receipt.type === 'sale' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {receipt.type === 'sale' ? t('purchaseHistory.sale', 'Продажа') : t('purchaseHistory.returnBadge', 'Возврат')}
+                          </span>
+                        )}
+                        {isDeferred && (
+                          <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-100 text-blue-700">Отложен</span>
+                        )}
+                      </div>
+                      <span className="font-bold text-gray-900">{total.toLocaleString('ru')} ₸</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs text-gray-500">
+                      <span>{isDeferred ? `Товаров: ${receipt.cart_data?.length || 0}` : (receipt.cashier_name || t('purchaseHistory.cashier', 'Кассир'))}</span>
+                      <span>{new Date(receipt.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    {!isDeferred && (
+                      <div className="flex gap-2 mt-1">
+                        <span className={`text-xs px-2 py-0.5 rounded ${receipt.payment_type === 'cash' ? 'bg-green-50 text-green-600' :
+                          receipt.payment_type === 'card' ? 'bg-blue-50 text-blue-600' :
+                            receipt.payment_type === 'qr' ? 'bg-purple-50 text-purple-600' : 'bg-gray-50 text-gray-600'
+                          }`}>
+                          {receipt.payment_type === 'cash' ? t('purchaseHistory.cash', '💵 Наличные') :
+                            receipt.payment_type === 'card' ? t('purchaseHistory.card', '💳 Карта') :
+                              receipt.payment_type === 'qr' ? t('purchaseHistory.qr', '📱 QR') : t('purchaseHistory.mixed', '🔀 Смешанная')}
+                        </span>
+                        {receipt.terminal_bank && (
+                          <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded">{receipt.terminal_bank}</span>
+                        )}
+                        {receipt.ofd_status === 'sent' && (
+                          <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded">{t('purchaseHistory.ofdSent', '✅ ОФД')}</span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Детали чека */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {detailLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+          </div>
+        ) : !selectedReceipt ? (
+          <div className="flex-1 flex items-center justify-center text-gray-400">
+            <div className="text-center">
+              <Eye className="w-16 h-16 mx-auto mb-4 text-gray-200" />
+              <p className="text-lg font-medium mb-1">{t('purchaseHistory.selectReceipt', 'Выберите чек')}</p>
+              <p className="text-sm">{t('purchaseHistory.selectReceiptHint', 'Нажмите на чек слева чтобы увидеть детали')}</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Заголовок чека */}
+            <div className="bg-gray-900 text-white p-6">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <h2 className="text-2xl font-black">{selectedReceipt.isDeferred ? selectedReceipt.name : `${t('purchaseHistory.receiptNumber', 'Чек #')}${selectedReceipt.receipt_number}`}</h2>
+                  <p className="text-gray-400 text-sm mt-1">
+                    {new Date(selectedReceipt.created_at).toLocaleString('ru-RU')} {selectedReceipt.cashier_name ? `• ${selectedReceipt.cashier_name}` : ''}
+                  </p>
+                </div>
+                <div className="text-right">
+                  {!selectedReceipt.isDeferred ? (
+                    <span className={`text-sm font-medium px-3 py-1 rounded-full ${selectedReceipt.type === 'sale' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {selectedReceipt.type === 'sale' ? t('purchaseHistory.saleBadge', '✅ Продажа') : t('purchaseHistory.returnBadgeIcon', '↩️ Возврат')}
+                    </span>
+                  ) : (
+                    <span className="text-sm font-medium px-3 py-1 rounded-full bg-blue-500/20 text-blue-400">
+                      Отложен
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-4xl font-black">
+                {selectedReceipt.isDeferred ?
+                  selectedReceipt.cart_data?.reduce((acc: number, item: any) => acc + (item.subtotal || (item.price_retail * item.quantity) || 0), 0).toLocaleString('ru') :
+                  Number(selectedReceipt.total_amount).toLocaleString('ru')} ₸
+              </div>
+            </div>
+
+            {/* Товары */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Package className="w-4 h-4" /> {t('purchaseHistory.itemsInReceipt', 'Товары в чеке')} ({selectedReceipt.isDeferred ? selectedReceipt.cart_data?.length : selectedReceipt.items?.length || 0})
+              </h3>
+              <div className="space-y-3">
+                {(selectedReceipt.isDeferred ? selectedReceipt.cart_data : (selectedReceipt.items || [])).map((item: any, idx: number) => (
+                  <div key={idx} className="bg-white p-4 rounded-xl border border-gray-200 flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="font-bold text-gray-900">{item.name || item.product_name || t('common.product', 'Товар')}</div>
+                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-3">
+                        {item.barcode && <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">{item.barcode}</span>}
+                        <span>{item.quantity} × {Number(item.price_retail || item.price || 0).toLocaleString('ru')} ₸</span>
+                      </div>
+                    </div>
+                    <div className="font-bold text-gray-900 text-lg">
+                      {Number(selectedReceipt.isDeferred ? (item.subtotal || (item.price_retail * item.quantity) || 0) : item.total).toLocaleString('ru')} ₸
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {!selectedReceipt.isDeferred && (
+                <>
+                  {/* Сводка */}
+                  <div className="mt-6 bg-gray-50 rounded-xl p-5 border border-gray-200 space-y-2 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>{t('purchaseHistory.paymentMethod', 'Способ оплаты:')}</span>
+                      <span className="font-medium">{
+                        selectedReceipt.payment_type === 'cash' ? t('purchaseHistory.cashOnly', 'Наличные') :
+                          selectedReceipt.payment_type === 'card' ? t('purchaseHistory.cardOnly', 'Карта') :
+                            selectedReceipt.payment_type === 'qr' ? 'QR' : t('purchaseHistory.mixedOnly', 'Смешанная')
+                      }</span>
+                    </div>
+                    {selectedReceipt.terminal_bank && (
+                      <div className="flex justify-between text-gray-600">
+                        <span>{t('purchaseHistory.terminalBank', 'Банк терминала:')}</span>
+                        <span className="font-medium">{selectedReceipt.terminal_bank}</span>
+                      </div>
+                    )}
+                    {selectedReceipt.cash_amount > 0 && (
+                      <>
+                        <div className="flex justify-between text-gray-600">
+                          <span>{t('purchaseHistory.cashAmount', 'Оплачено наличными:')}</span>
+                          <span className="font-medium">{Number(selectedReceipt.cash_amount).toLocaleString('ru')} ₸</span>
+                        </div>
+                        {selectedReceipt.cash_given > 0 && selectedReceipt.cash_given !== selectedReceipt.cash_amount && (
+                          <div className="flex justify-between text-gray-500 text-xs pl-2">
+                            <span>{t('purchaseHistory.cashGiven', '  ↳ Внесено наличными:')}</span>
+                            <span className="font-medium">{Number(selectedReceipt.cash_given).toLocaleString('ru')} ₸</span>
+                          </div>
+                        )}
+                        {selectedReceipt.change_amount > 0 && (
+                          <div className="flex justify-between text-gray-500 text-xs pl-2">
+                            <span>{t('purchaseHistory.changeAmount', '  ↳ Сдача:')}</span>
+                            <span className="font-medium">{Number(selectedReceipt.change_amount).toLocaleString('ru')} ₸</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {selectedReceipt.card_amount > 0 && (
+                      <div className="flex justify-between text-gray-600">
+                        <span>{t('purchaseHistory.cardAmount', 'Карта:')}</span>
+                        <span className="font-medium">{Number(selectedReceipt.card_amount).toLocaleString('ru')} ₸</span>
+                      </div>
+                    )}
+                    {selectedReceipt.discount_amount > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>{t('purchaseHistory.discount', 'Скидка:')}</span>
+                        <span className="font-medium">-{Number(selectedReceipt.discount_amount).toLocaleString('ru')} ₸</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-bold text-gray-900 pt-2 border-t border-gray-300">
+                      <span>{t('purchaseHistory.total', 'ИТОГО:')}</span>
+                      <span className="text-lg">{Number(selectedReceipt.total_amount).toLocaleString('ru')} ₸</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {!selectedReceipt.isDeferred && selectedReceipt.ofd_ticket_url && (
+                <div className="mt-4 bg-green-50 p-4 rounded-xl border border-green-200 text-sm">
+                  <p className="text-green-700 font-medium mb-1">{t('purchaseHistory.fiscalized', '✅ Фискализирован')}</p>
+                  <a href={selectedReceipt.ofd_ticket_url} target="_blank" rel="noopener" className="text-green-600 underline text-xs break-all">
+                    {selectedReceipt.ofd_ticket_url}
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Действия */}
+            <div className="p-4 border-t border-gray-200 bg-white flex gap-3">
+              <button onClick={() => setSelectedReceipt(null)}
+                className="px-5 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium text-gray-600 transition-colors flex items-center gap-2">
+                <ChevronLeft className="w-4 h-4" /> {t('purchaseHistory.back', 'Назад')}
+              </button>
+
+              <div className="flex-1 flex justify-end gap-3">
+                {!selectedReceipt.isDeferred ? (
+                  <>
+                    <button
+                      onClick={() => handleReprint(selectedReceipt.id)}
+                      className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Printer className="w-5 h-5" /> {t('purchaseHistory.printDuplicateBtn', 'Печать дубликата')}
+                    </button>
+                    {selectedReceipt.type === 'sale' && !receipts.some(r => r.type === 'return' && r.parent_receipt_id === selectedReceipt.id) && (
+                      <button
+                        onClick={() => handleReturnClick(selectedReceipt)}
+                        className="bg-white border border-red-200 text-red-600 hover:bg-red-50 px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <Undo2 className="w-5 h-5" /> {t('purchaseHistory.processReturnBtn', 'Оформить возврат')}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => requestDeleteDeferred(selectedReceipt.id)}
+                      className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Trash2 className="w-5 h-5" /> Удалить
+                    </button>
+                    <button
+                      onClick={() => handleRestoreDeferred(selectedReceipt.id, selectedReceipt.cart_data)}
+                      className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Play className="w-5 h-5" /> Восстановить чек на кассу
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            {/* Скрытый чек для печати */}
+            <div className="hidden">
+              <PrintableReceipt receiptData={completedReceiptData} ref={receiptPrintRef} showFiscalBadge={useSettingsStore.getState().showFiscalBadge} />
+            </div>
+
+            <ConfirmDialog
+              isOpen={confirmDialog.isOpen}
+              title={t('purchaseHistory.returnTitle', 'Оформить возврат?')}
+              message={t('purchaseHistory.returnMessage', {
+                number: confirmDialog.receipt?.receipt_number,
+                amount: Number(confirmDialog.receipt?.total_amount || 0).toLocaleString('ru'),
+                defaultValue: `Вы уверены, что хотите оформить полный возврат по чеку #${confirmDialog.receipt?.receipt_number}?\nСумма возврата: ${Number(confirmDialog.receipt?.total_amount || 0).toLocaleString('ru')} ₸`
+              })}
+              onConfirm={handleConfirmReturn}
+              onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+              danger={true}
+              confirmText={t('purchaseHistory.processReturnBtn', 'Оформить возврат')}
+            />
+
+            <ConfirmDialog
+              isOpen={deleteDialog.isOpen}
+              title="Удалить чек?"
+              message="Вы уверены, что хотите удалить этот отложенный чек?"
+              onConfirm={confirmDeleteDeferred}
+              onCancel={() => setDeleteDialog(prev => ({ ...prev, isOpen: false }))}
+              danger={true}
+              confirmText="Удалить"
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
