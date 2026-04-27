@@ -1,0 +1,8 @@
+version: 1.0.1
+files:
+  - url: EasyKassa-Setup-1.0.1.exe
+    sha512: uYNAcmnPAeQs0mgoLleMFbDeSi19rDuw5j5DFbweWh90b3rGFerd1rM20jh6a7c2xvknLKkTuZ6BDU+ivDpq/w==
+    size: 98363113
+path: EasyKassa-Setup-1.0.1.exe
+sha512: uYNAcmnPAeQs0mgoLleMFbDeSi19rDuw5j5DFbweWh90b3rGFerd1rM20jh6a7c2xvknLKkTuZ6BDU+ivDpq/w==
+releaseDate: '2026-04-23T10:24:09.870Z'
